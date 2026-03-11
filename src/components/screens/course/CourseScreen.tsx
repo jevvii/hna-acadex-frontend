@@ -1,0 +1,3837 @@
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import {
+  View, Text, StyleSheet, TouchableOpacity, ScrollView,
+  RefreshControl, ActivityIndicator, Linking, Modal,
+  TextInput, Alert, KeyboardAvoidingView, Platform, Image as RNImage, LayoutAnimation, UIManager, useWindowDimensions,
+} from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
+import { Image } from 'expo-image';
+import { Ionicons } from '@expo/vector-icons';
+import { useRouter, useLocalSearchParams } from 'expo-router';
+import * as DocumentPicker from 'expo-document-picker';
+import * as ImagePicker from 'expo-image-picker';
+import * as FileSystem from 'expo-file-system';
+import Svg, { Circle } from 'react-native-svg';
+import { useAuth } from '@/contexts/AuthContext';
+import { useTheme } from '@/contexts/ThemeContext';
+import { api, API_BASE_URL } from '@/lib/api';
+import { DateTimePicker } from '@/components/shared/DateTimePicker';
+import { DocumentViewerModal } from '@/components/shared/DocumentViewerModal';
+import { WeeklyModule, Activity, CourseFile, Announcement, Quiz, AttendanceStatus } from '@/types';
+import { Colors, Spacing, Radius, Shadows } from '@/constants/colors';
+
+type CourseTab = 'modules' | 'assignments' | 'files' | 'announcements' | 'quizzes' | 'attendance' | 'grades';
+
+type FormState = {
+  title: string;
+  description: string;
+  body: string;
+  week_number: string;
+  is_exam_week: boolean;
+  points: string;
+  allowed_file_types: string[];
+  file_name: string;
+  file_url: string;
+  file_type: string;
+  folder_path: string;
+  category: string;
+  instructions: string;
+  attempt_limit: string;
+  time_limit_minutes: string;
+};
+
+type QuizActionVariant = 'start' | 'resume' | 'retry' | 'result' | 'closed';
+
+type QuizActionConfig = {
+  label: string;
+  disabled: boolean;
+  onPress: () => void;
+  variant: QuizActionVariant;
+};
+
+const TABS: { key: CourseTab; label: string; icon: string }[] = [
+  { key: 'modules', label: 'Modules', icon: 'layers-outline' },
+  { key: 'assignments', label: 'Assignments', icon: 'document-text-outline' },
+  { key: 'attendance', label: 'Attendance', icon: 'calendar-outline' },
+  { key: 'quizzes', label: 'Quizzes', icon: 'help-circle-outline' },
+  { key: 'grades', label: 'Grades', icon: 'stats-chart-outline' },
+  { key: 'files', label: 'Files', icon: 'folder-outline' },
+  { key: 'announcements', label: 'Announcements', icon: 'megaphone-outline' },
+];
+
+const FILE_ICONS: Record<string, string> = {
+  pdf: 'document-text',
+  docx: 'document',
+  doc: 'document',
+  pptx: 'easel',
+  xlsx: 'grid',
+  xls: 'grid',
+  jpg: 'image',
+  jpeg: 'image',
+  png: 'image',
+  mp4: 'videocam',
+  link: 'link',
+};
+
+const API_PATHS: Record<CourseTab, string> = {
+  modules: '/course-modules/',
+  assignments: '/activities/',
+  attendance: '/attendance/',
+  grades: '/course-sections/',
+  files: '/course-files/',
+  announcements: '/announcements/',
+  quizzes: '/quizzes/',
+};
+
+const EMPTY_FORM: FormState = {
+  title: '',
+  description: '',
+  body: '',
+  week_number: '1',
+  is_exam_week: false,
+  points: '100',
+  allowed_file_types: ['all'],
+  file_name: '',
+  file_url: '',
+  file_type: '',
+  folder_path: '/',
+  category: 'general',
+  instructions: '',
+  attempt_limit: '1',
+  time_limit_minutes: '',
+};
+
+const QUIZ_ACTION_STYLES: Record<
+  QuizActionVariant,
+  {
+    backgroundColor: string;
+    borderColor: string;
+    textColor: string;
+    gradient: [string, string];
+    badgeBackground: string;
+    badgeText: string;
+  }
+> = {
+  start: {
+    backgroundColor: '#0F766E',
+    borderColor: '#0D9488',
+    textColor: '#FFFFFF',
+    gradient: ['#0F766E', '#14B8A6'],
+    badgeBackground: 'rgba(255,255,255,0.2)',
+    badgeText: '#ECFEFF',
+  },
+  resume: {
+    backgroundColor: '#B45309',
+    borderColor: '#D97706',
+    textColor: '#FFFFFF',
+    gradient: ['#B45309', '#F59E0B'],
+    badgeBackground: 'rgba(255,255,255,0.2)',
+    badgeText: '#FFFBEB',
+  },
+  retry: {
+    backgroundColor: '#1D4ED8',
+    borderColor: '#2563EB',
+    textColor: '#FFFFFF',
+    gradient: ['#1D4ED8', '#3B82F6'],
+    badgeBackground: 'rgba(255,255,255,0.2)',
+    badgeText: '#EFF6FF',
+  },
+  result: {
+    backgroundColor: '#334155',
+    borderColor: '#475569',
+    textColor: '#FFFFFF',
+    gradient: ['#1E293B', '#334155'],
+    badgeBackground: 'rgba(255,255,255,0.2)',
+    badgeText: '#F8FAFC',
+  },
+  closed: {
+    backgroundColor: '#94A3B8',
+    borderColor: '#94A3B8',
+    textColor: '#F8FAFC',
+    gradient: ['#64748B', '#94A3B8'],
+    badgeBackground: 'rgba(255,255,255,0.24)',
+    badgeText: '#F8FAFC',
+  },
+};
+
+function formatDate(dateStr?: string) {
+  if (!dateStr) return '';
+  return new Date(dateStr).toLocaleDateString('en-US', {
+    month: 'short', day: 'numeric', year: 'numeric',
+    hour: '2-digit', minute: '2-digit',
+  });
+}
+
+function formatDuration(seconds?: number | null) {
+  if (seconds == null || seconds < 0) return '-';
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${mins}m ${secs}s`;
+}
+
+function formatFileSize(bytes?: number) {
+  if (!bytes || bytes <= 0) return 'Unknown size';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function parseFilenameFromContentDisposition(headerValue?: string | null) {
+  if (!headerValue) return null;
+  const utfMatch = headerValue.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utfMatch?.[1]) return decodeURIComponent(utfMatch[1]);
+  const plainMatch = headerValue.match(/filename=\"?([^\";]+)\"?/i);
+  if (plainMatch?.[1]) return plainMatch[1];
+  return null;
+}
+
+function isImageFile(fileName: string, mimeType?: string) {
+  if ((mimeType || '').startsWith('image/')) return true;
+  const ext = (fileName.split('.').pop() || '').toLowerCase();
+  return ['jpg', 'jpeg', 'png', 'webp'].includes(ext);
+}
+
+function fileNameFromUrl(url: string) {
+  const clean = url.split('?')[0].split('#')[0];
+  const name = clean.split('/').pop();
+  return name || 'file';
+}
+
+const API_ORIGIN = API_BASE_URL.replace(/\/api\/?$/, '');
+
+function resolveBackendFileUrl(rawUrl: string) {
+  if (!rawUrl) return rawUrl;
+  if (/^(file:|content:|data:|blob:)/i.test(rawUrl)) return rawUrl;
+
+  if (/^https?:\/\//i.test(rawUrl)) {
+    // Ensure emulator/device can open loopback URLs returned by backend.
+    return rawUrl.replace(/^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?/i, API_ORIGIN);
+  }
+
+  if (rawUrl.startsWith('/')) return `${API_ORIGIN}${rawUrl}`;
+  return `${API_ORIGIN}/${rawUrl.replace(/^\.?\//, '')}`;
+}
+
+function ItemActions({ onEdit, onDelete }: { onEdit: () => void; onDelete: () => void }) {
+  return (
+    <View style={styles.itemActions}>
+      <TouchableOpacity onPress={onEdit} style={styles.actionBtn}>
+        <Ionicons name="create-outline" size={18} color={Colors.primaryLight} />
+      </TouchableOpacity>
+      <TouchableOpacity onPress={onDelete} style={styles.actionBtn}>
+        <Ionicons name="trash-outline" size={18} color={Colors.accentRed} />
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+function ScoreRing({
+  score,
+  maxScore,
+  size = 110,
+}: {
+  score?: number | null;
+  maxScore?: number | null;
+  size?: number;
+}) {
+  const strokeWidth = 10;
+  const radius = (size - strokeWidth) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const safeMax = maxScore && maxScore > 0 ? maxScore : 1;
+  const safeScore = score && score > 0 ? score : 0;
+  const progress = Math.min(Math.max(safeScore / safeMax, 0), 1);
+  const offset = circumference * (1 - progress);
+
+  return (
+    <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
+      <Svg width={size} height={size}>
+        <Circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          stroke="#E2E8F0"
+          strokeWidth={strokeWidth}
+          fill="none"
+        />
+        <Circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          stroke={Colors.primary}
+          strokeWidth={strokeWidth}
+          fill="none"
+          strokeDasharray={`${circumference} ${circumference}`}
+          strokeDashoffset={offset}
+          strokeLinecap="round"
+          rotation="-90"
+          originX={size / 2}
+          originY={size / 2}
+        />
+      </Svg>
+      <View style={styles.scoreRingLabel}>
+        <Text style={styles.scoreRingValue}>{score ?? 0}</Text>
+        <Text style={styles.scoreRingMax}>/ {maxScore ?? 0}</Text>
+      </View>
+    </View>
+  );
+}
+
+function ScoreDistributionLine({
+  score,
+  maxScore,
+  lowest,
+  mean,
+  highest,
+}: {
+  score?: number | null;
+  maxScore?: number | null;
+  lowest?: number | null;
+  mean?: number | null;
+  highest?: number | null;
+}) {
+  const safeMax = maxScore && maxScore > 0 ? maxScore : 1;
+  const norm = (v?: number | null) => {
+    if (v == null) return null;
+    return Math.min(Math.max(v / safeMax, 0), 1);
+  };
+  const meX = norm(score);
+  const lowX = norm(lowest);
+  const meanX = norm(mean);
+  const highX = norm(highest);
+
+  const Marker = ({
+    x,
+    color,
+    label,
+    value,
+  }: {
+    x: number | null;
+    color: string;
+    label: string;
+    value?: number | null;
+  }) => {
+    if (x == null) return null;
+    return (
+      <View style={[styles.distMarkerWrap, { left: `${x * 100}%` }]}>
+        <View style={[styles.distMarker, { backgroundColor: color }]} />
+        <Text style={styles.distMarkerLabel}>{label}</Text>
+        <Text style={styles.distMarkerValue}>{value ?? '-'}</Text>
+      </View>
+    );
+  };
+
+  return (
+    <View style={styles.distWrap}>
+      <View style={styles.distTrack} />
+      <Marker x={lowX} color="#DC2626" label="Low" value={lowest} />
+      <Marker x={meanX} color="#0EA5E9" label="Mean" value={mean} />
+      <Marker x={highX} color="#16A34A" label="High" value={highest} />
+      <Marker x={meX} color={Colors.primary} label="You" value={score} />
+      <View style={styles.distEnds}>
+        <Text style={styles.distEndText}>0</Text>
+        <Text style={styles.distEndText}>{maxScore ?? 0}</Text>
+      </View>
+    </View>
+  );
+}
+
+export function CourseScreen() {
+  const { id, title, tab, open_activity_id, open_quiz_id } = useLocalSearchParams<{
+    id: string;
+    title?: string;
+    tab?: string;
+    open_activity_id?: string;
+    open_quiz_id?: string;
+  }>();
+  const { user } = useAuth();
+  const { colors } = useTheme();
+  const router = useRouter();
+  const { width: screenWidth } = useWindowDimensions();
+  const compactMeta = screenWidth < 390;
+  const isTeacher = user?.role === 'teacher';
+  const isAdmin = user?.role === 'admin';
+  const canManage = isTeacher || isAdmin;
+
+  const [activeTab, setActiveTab] = useState<CourseTab>('modules');
+  const [modules, setModules] = useState<WeeklyModule[]>([]);
+  const [expandedModules, setExpandedModules] = useState<Record<string, boolean>>({});
+  const [activities, setActivities] = useState<Activity[]>([]);
+  const [files, setFiles] = useState<CourseFile[]>([]);
+  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+  const [quizzes, setQuizzes] = useState<Quiz[]>([]);
+  const [attendanceLoading, setAttendanceLoading] = useState(false);
+  const [attendanceSessions, setAttendanceSessions] = useState<any[]>([]);
+  const [attendanceStudents, setAttendanceStudents] = useState<any[]>([]);
+  const [attendanceRecordMap, setAttendanceRecordMap] = useState<Record<string, AttendanceStatus>>({});
+  const [selectedAttendanceSessionId, setSelectedAttendanceSessionId] = useState<string | null>(null);
+  const [newAttendanceDate, setNewAttendanceDate] = useState(new Date());
+  const [newAttendanceTitle, setNewAttendanceTitle] = useState('');
+  const [studentAttendanceSummary, setStudentAttendanceSummary] = useState<any>(null);
+  const [studentAttendanceHistory, setStudentAttendanceHistory] = useState<any[]>([]);
+  const [attendanceHistoryModalVisible, setAttendanceHistoryModalVisible] = useState(false);
+  const [exportingGrades, setExportingGrades] = useState(false);
+  const [gradeExportStatus, setGradeExportStatus] = useState<'idle' | 'exporting' | 'success' | 'error'>('idle');
+  const [gradeExportAt, setGradeExportAt] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const [modalVisible, setModalVisible] = useState(false);
+  const [form, setForm] = useState<FormState>(EMPTY_FORM);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [selectedWeeklyModuleId, setSelectedWeeklyModuleId] = useState<string | null>(null);
+  const [hasDeadline, setHasDeadline] = useState(false);
+  const [deadlineDate, setDeadlineDate] = useState(new Date());
+  const [deadlineHasTime, setDeadlineHasTime] = useState(true);
+  const [hasQuizOpenAt, setHasQuizOpenAt] = useState(false);
+  const [quizOpenAtDate, setQuizOpenAtDate] = useState(new Date());
+  const [quizOpenHasTime, setQuizOpenHasTime] = useState(true);
+  const [hasQuizCloseAt, setHasQuizCloseAt] = useState(false);
+  const [quizCloseAtDate, setQuizCloseAtDate] = useState(new Date());
+  const [quizCloseHasTime, setQuizCloseHasTime] = useState(true);
+
+  const [submissionModalVisible, setSubmissionModalVisible] = useState(false);
+  const [submissionText, setSubmissionText] = useState('');
+  const [selectedActivity, setSelectedActivity] = useState<Activity | null>(null);
+  const [submittingActivity, setSubmittingActivity] = useState(false);
+  const [activityDetailVisible, setActivityDetailVisible] = useState(false);
+  const [selectedSubmissionFiles, setSelectedSubmissionFiles] = useState<Array<{ uri: string; name: string; mimeType: string; size?: number }>>([]);
+  const [selectedCourseMaterialFile, setSelectedCourseMaterialFile] = useState<{ uri: string; name: string; mimeType: string; size?: number } | null>(null);
+  const [submissionInlineError, setSubmissionInlineError] = useState<string | null>(null);
+  const [submissionSuccessAt, setSubmissionSuccessAt] = useState<string | null>(null);
+  const [showSubmissionReview, setShowSubmissionReview] = useState(false);
+  const [previewImageUri, setPreviewImageUri] = useState<string | null>(null);
+  const [imageAspectByUri, setImageAspectByUri] = useState<Record<string, number>>({});
+  const [docViewerVisible, setDocViewerVisible] = useState(false);
+  const [docViewerUrl, setDocViewerUrl] = useState<string | null>(null);
+  const [docViewerPreviewUrl, setDocViewerPreviewUrl] = useState<string | null>(null);
+  const [docViewerTitle, setDocViewerTitle] = useState<string>('');
+
+  const [quizModalVisible, setQuizModalVisible] = useState(false);
+  const [quizSubmitting, setQuizSubmitting] = useState(false);
+  const [selectedQuiz, setSelectedQuiz] = useState<Quiz | null>(null);
+  const [currentQuizAttemptId, setCurrentQuizAttemptId] = useState<string | null>(null);
+  const [quizTimeRemaining, setQuizTimeRemaining] = useState<number | null>(null);
+  const [quizQuestions, setQuizQuestions] = useState<any[]>([]);
+  const [quizAnswers, setQuizAnswers] = useState<Record<string, { selected_choice_id?: string; text_answer?: string }>>({});
+
+  const [quizResultModalVisible, setQuizResultModalVisible] = useState(false);
+  const [quizResult, setQuizResult] = useState<any>(null);
+
+  const [gradeModalVisible, setGradeModalVisible] = useState(false);
+  const [gradingItems, setGradingItems] = useState<any[]>([]);
+  const [gradingLoading, setGradingLoading] = useState(false);
+  const [selectedGradeActivity, setSelectedGradeActivity] = useState<Activity | null>(null);
+  const [expandedGradeItemKey, setExpandedGradeItemKey] = useState<string | null>(null);
+
+  const [quizGradingModalVisible, setQuizGradingModalVisible] = useState(false);
+  const [quizGradingItems, setQuizGradingItems] = useState<any[]>([]);
+  const [quizGradingLoading, setQuizGradingLoading] = useState(false);
+  const [expandedQuizAttemptKey, setExpandedQuizAttemptKey] = useState<string | null>(null);
+
+  const [quickQuizBuilderVisible, setQuickQuizBuilderVisible] = useState(false);
+  const [quickQuizTitle, setQuickQuizTitle] = useState('');
+  const [quickQuizInstructions, setQuickQuizInstructions] = useState('');
+  const [quickQuizWeeklyModuleId, setQuickQuizWeeklyModuleId] = useState<string | null>(null);
+  const [quickQuizAttemptLimit, setQuickQuizAttemptLimit] = useState('1');
+  const [quickQuizTimeLimit, setQuickQuizTimeLimit] = useState('30');
+  const [quickQuizHasOpenAt, setQuickQuizHasOpenAt] = useState(false);
+  const [quickQuizOpenAt, setQuickQuizOpenAt] = useState(new Date());
+  const [quickQuizOpenHasTime, setQuickQuizOpenHasTime] = useState(true);
+  const [quickQuizHasCloseAt, setQuickQuizHasCloseAt] = useState(false);
+  const [quickQuizCloseAt, setQuickQuizCloseAt] = useState(new Date(Date.now() + 60 * 60 * 1000));
+  const [quickQuizCloseHasTime, setQuickQuizCloseHasTime] = useState(true);
+  const [quickQuizQuestions, setQuickQuizQuestions] = useState<any[]>([]);
+  const [creatingQuickQuiz, setCreatingQuickQuiz] = useState(false);
+
+  const [quizInfoModalVisible, setQuizInfoModalVisible] = useState(false);
+  const [selectedQuizForInfo, setSelectedQuizForInfo] = useState<Quiz | null>(null);
+  const [quizInfoStats, setQuizInfoStats] = useState<any>(null);
+  const visibleTabs = useMemo(() => TABS.filter((tab) => (tab.key === 'grades' ? canManage : true)), [canManage]);
+  const lastHandledTargetRef = useRef<string | null>(null);
+
+  const fetchData = useCallback(async () => {
+    if (!id) return;
+    try {
+      const data = await api.get(`/course-sections/${id}/content/`);
+      setModules((data.modules || []) as WeeklyModule[]);
+      setActivities((data.activities || []) as Activity[]);
+      setFiles((data.files || []) as CourseFile[]);
+      setAnnouncements((data.announcements || []) as Announcement[]);
+      setQuizzes((data.quizzes || []) as Quiz[]);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [id]);
+
+  const buildAttendanceMap = (records: any[]) => {
+    const map: Record<string, AttendanceStatus> = {};
+    records.forEach((r) => {
+      map[`${r.meeting_id}:${r.student_id}`] = r.status as AttendanceStatus;
+    });
+    return map;
+  };
+
+  const fetchAttendanceData = useCallback(async () => {
+    if (!id) return;
+    setAttendanceLoading(true);
+    try {
+      const data = await api.get(`/course-sections/${id}/attendance/`);
+      setAttendanceSessions(data.sessions || []);
+      if (canManage) {
+        setAttendanceStudents(data.students || []);
+        setAttendanceRecordMap(buildAttendanceMap(data.records || []));
+        if (!selectedAttendanceSessionId && (data.sessions || [])[0]?.id) {
+          setSelectedAttendanceSessionId(data.sessions[0].id);
+        }
+      } else {
+        setStudentAttendanceSummary(data.summary || null);
+        setStudentAttendanceHistory(data.history || []);
+      }
+    } catch {
+      if (!canManage) {
+        setStudentAttendanceSummary(null);
+        setStudentAttendanceHistory([]);
+      }
+    } finally {
+      setAttendanceLoading(false);
+    }
+  }, [id, canManage, selectedAttendanceSessionId]);
+
+  useEffect(() => {
+    if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+      UIManager.setLayoutAnimationEnabledExperimental(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    setExpandedModules((prev) => {
+      const next = { ...prev };
+      for (const mod of modules) {
+        if (typeof next[mod.id] !== 'boolean') next[mod.id] = true;
+      }
+      return next;
+    });
+  }, [modules]);
+
+  useEffect(() => {
+    selectedSubmissionFiles
+      .filter((f) => isImageFile(f.name, f.mimeType))
+      .forEach((f) => {
+        if (imageAspectByUri[f.uri]) return;
+        RNImage.getSize(
+          f.uri,
+          (width, height) => {
+            if (!width || !height) return;
+            setImageAspectByUri((prev) => ({ ...prev, [f.uri]: width / height }));
+          },
+          () => {},
+        );
+      });
+  }, [selectedSubmissionFiles, imageAspectByUri]);
+
+  useEffect(() => {
+    fetchData();
+    fetchAttendanceData();
+  }, [fetchData, fetchAttendanceData]);
+  useEffect(() => {
+    if (!tab) return;
+    if (['modules', 'assignments', 'files', 'announcements', 'quizzes', 'attendance', 'grades'].includes(tab)) {
+      setActiveTab(tab as CourseTab);
+    }
+  }, [tab]);
+  useEffect(() => {
+    const timer = setInterval(() => {
+      fetchAttendanceData();
+    }, 20000);
+    return () => clearInterval(timer);
+  }, [fetchAttendanceData]);
+
+  useEffect(() => {
+    if (loading) return;
+    const targetKey = `${String(open_activity_id || '')}:${String(open_quiz_id || '')}`;
+    if (!open_activity_id && !open_quiz_id) return;
+    if (lastHandledTargetRef.current === targetKey) return;
+    if (open_activity_id) {
+      const target = activities.find((a) => a.id === open_activity_id);
+      if (target) {
+        lastHandledTargetRef.current = targetKey;
+        setActiveTab('assignments');
+        openActivityDetail(target);
+      }
+      return;
+    }
+    if (open_quiz_id) {
+      const target = quizzes.find((q) => q.id === open_quiz_id);
+      if (target) {
+        lastHandledTargetRef.current = targetKey;
+        setActiveTab('quizzes');
+        openQuizInfo(target);
+      }
+    }
+  }, [loading, open_activity_id, open_quiz_id, activities, quizzes]);
+  const onRefresh = () => {
+    setRefreshing(true);
+    fetchData();
+    fetchAttendanceData();
+  };
+
+  const exportGradesCsv = () => {
+    if (!id) return;
+    Alert.alert('Export CSV', 'Export all grades for this section to CSV?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Download',
+        onPress: async () => {
+          setExportingGrades(true);
+          setGradeExportStatus('exporting');
+          try {
+            const data = await api.getRaw(`/course-sections/${id}/grades/export/`);
+            const fallback = `course_section_${id}_grades.csv`;
+            const filename = parseFilenameFromContentDisposition(data.headers.get('content-disposition')) || fallback;
+            if (Platform.OS === 'web') {
+              const doc = (globalThis as any).document as Document;
+              const blob = new Blob([data.text], { type: 'text/csv;charset=utf-8;' });
+              const url = URL.createObjectURL(blob);
+              const anchor = doc.createElement('a');
+              anchor.href = url;
+              anchor.setAttribute('download', filename);
+              doc.body.appendChild(anchor);
+              anchor.click();
+              doc.body.removeChild(anchor);
+              URL.revokeObjectURL(url);
+              setGradeExportStatus('success');
+              setGradeExportAt(new Date().toISOString());
+              return;
+            }
+            const directory = FileSystem.documentDirectory || FileSystem.cacheDirectory;
+            if (!directory) {
+              throw new Error('No writable directory available.');
+            }
+            const target = `${directory}${filename}`;
+            await FileSystem.writeAsStringAsync(target, data.text, { encoding: FileSystem.EncodingType.UTF8 });
+            try {
+              if (Platform.OS === 'android') {
+                const contentUri = await FileSystem.getContentUriAsync(target);
+                await Linking.openURL(contentUri);
+              } else {
+                await Linking.openURL(target);
+              }
+            } catch {
+              Alert.alert('Exported', `CSV saved to:\n${target}`);
+            }
+            setGradeExportStatus('success');
+            setGradeExportAt(new Date().toISOString());
+          } catch (e: any) {
+            setGradeExportStatus('error');
+            Alert.alert('Error', e.message || 'Could not export grades.');
+          } finally {
+            setExportingGrades(false);
+          }
+        },
+      },
+    ]);
+  };
+
+  const gradeExportStatusUi = useMemo(() => {
+    if (gradeExportStatus === 'exporting') {
+      return { text: 'Generating CSV...', bg: '#DBEAFE', fg: '#1D4ED8' };
+    }
+    if (gradeExportStatus === 'success') {
+      const at = gradeExportAt ? new Date(gradeExportAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+      return { text: at ? `Exported at ${at}` : 'Exported', bg: '#DCFCE7', fg: '#166534' };
+    }
+    if (gradeExportStatus === 'error') {
+      return { text: 'Export failed', bg: '#FEE2E2', fg: '#B91C1C' };
+    }
+    return { text: 'Ready to export', bg: '#F1F5F9', fg: '#334155' };
+  }, [gradeExportStatus, gradeExportAt]);
+
+  useEffect(() => {
+    if (!quizModalVisible || quizTimeRemaining == null) return;
+    const interval = setInterval(() => {
+      setQuizTimeRemaining((prev) => {
+        if (prev == null) return prev;
+        return prev > 0 ? prev - 1 : 0;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [quizModalVisible, quizTimeRemaining]);
+
+  useEffect(() => {
+    if (!quizModalVisible) return;
+    if (quizTimeRemaining === 0 && !quizSubmitting && selectedQuiz) {
+      submitQuiz();
+    }
+  }, [quizTimeRemaining, quizModalVisible, quizSubmitting, selectedQuiz]);
+
+  useEffect(() => {
+    if (!quizModalVisible || !selectedQuiz || !currentQuizAttemptId) return;
+    const autosaveInterval = setInterval(async () => {
+      try {
+        await saveQuizProgress();
+      } catch {
+        // Silent fail; next autosave/submit will retry.
+      }
+    }, 15000);
+    return () => clearInterval(autosaveInterval);
+  }, [quizModalVisible, selectedQuiz, currentQuizAttemptId, quizAnswers]);
+
+  const moduleById = useMemo(() => {
+    const map = new Map<string, WeeklyModule>();
+    modules.forEach((m) => map.set(m.id, m));
+    return map;
+  }, [modules]);
+
+  const weekLabel = (weeklyModuleId?: string) => {
+    if (!weeklyModuleId) return 'Unassigned Topic';
+    const module = moduleById.get(weeklyModuleId);
+    if (!module) return 'Unassigned Topic';
+    return `Week ${module.week_number}: ${module.title}`;
+  };
+
+  const acceptedTypesLabel = (activity: any) => {
+    const types: string[] = activity?.allowed_file_types || [];
+    if (!types || types.length === 0 || types.includes('all')) return 'Text / Image / PDF';
+    return types.map((t) => t.toUpperCase()).join(' / ');
+  };
+
+  const submissionStatusLabel = (activity: any) => {
+    const sub = activity?.my_submission;
+    if (!sub) return 'No Submission';
+    if (sub.score != null) return `Graded (${sub.score}/${activity.points})`;
+    return 'Submitted (Waiting for Grade)';
+  };
+
+  const getQuizAction = (quiz: Quiz): QuizActionConfig => {
+    const now = new Date();
+    const isOpen = (!quiz.open_at || new Date(quiz.open_at) <= now) && (!quiz.close_at || new Date(quiz.close_at) >= now);
+    const attemptsUsed = quiz.my_attempt?.attempts_used ?? (quiz.my_attempt?.attempt_number || 0);
+    const attemptLimit = quiz.my_attempt?.attempt_limit ?? quiz.attempt_limit ?? 1;
+    const attemptsRemaining = quiz.my_attempt?.attempts_remaining ?? Math.max(attemptLimit - attemptsUsed, 0);
+    const hasInProgress = !!quiz.my_in_progress_attempt?.attempt_id;
+
+    if (hasInProgress) {
+      return {
+        label: 'Resume Quiz',
+        disabled: false,
+        onPress: () => confirmAndStartQuiz(quiz),
+        variant: 'resume',
+      };
+    }
+    if (attemptsRemaining <= 0) {
+      return {
+        label: 'View Result',
+        disabled: !quiz.my_attempt,
+        onPress: () => {
+          if (quiz.my_attempt) viewQuizResult(quiz);
+        },
+        variant: 'result',
+      };
+    }
+    if (!isOpen) {
+      return {
+        label: 'Quiz Closed',
+        disabled: true,
+        onPress: () => {},
+        variant: 'closed',
+      };
+    }
+    if ((quiz.my_attempt?.attempt_number || 0) > 0) {
+      return {
+        label: 'Re-attempt',
+        disabled: false,
+        onPress: () => confirmAndStartQuiz(quiz),
+        variant: 'retry',
+      };
+    }
+    return {
+      label: 'Start Quiz',
+      disabled: false,
+      onPress: () => confirmAndStartQuiz(quiz),
+      variant: 'start',
+    };
+  };
+
+  const toggleModuleExpanded = (moduleId: string) => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setExpandedModules((prev) => ({ ...prev, [moduleId]: !prev[moduleId] }));
+  };
+
+  const moduleProgress = (moduleId: string) => {
+    const moduleAssignments = activities.filter((a) => a.weekly_module_id === moduleId);
+    const moduleQuizzes = quizzes.filter((q) => q.weekly_module_id === moduleId);
+    const total = moduleAssignments.length + moduleQuizzes.length;
+    const assignmentDone = moduleAssignments.filter((a) => !!a.my_submission).length;
+    const quizDone = moduleQuizzes.filter((q) => (q.my_attempt?.attempts_used ?? 0) > 0).length;
+    const completed = assignmentDone + quizDone;
+    const percent = total > 0 ? Math.round((completed / total) * 100) : 0;
+    return { total, completed, percent };
+  };
+
+  const addItemToModule = (tab: CourseTab, moduleId: string) => {
+    setActiveTab(tab);
+    setEditingId(null);
+    setForm(EMPTY_FORM);
+    setSelectedWeeklyModuleId(moduleId);
+    setModalVisible(true);
+  };
+
+  const togglePublishByType = async (type: 'module' | 'assignment' | 'quiz' | 'file', item: any) => {
+    try {
+      if (type === 'module') {
+        await api.patch(`/course-modules/${item.id}/`, { is_published: !item.is_published });
+      } else if (type === 'assignment') {
+        await api.patch(`/activities/${item.id}/`, { is_published: !item.is_published });
+      } else if (type === 'quiz') {
+        await api.patch(`/quizzes/${item.id}/`, { is_published: !item.is_published });
+      } else {
+        await api.patch(`/course-files/${item.id}/`, { is_visible: !item.is_visible });
+      }
+      await fetchData();
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'Could not update publish status.');
+    }
+  };
+
+  const ATTENDANCE_CYCLE: AttendanceStatus[] = ['Present', 'Late', 'Excused', 'Absent'];
+
+  const nextAttendanceStatus = (current?: AttendanceStatus): AttendanceStatus => {
+    const idx = ATTENDANCE_CYCLE.indexOf((current || 'Absent') as AttendanceStatus);
+    const next = idx < 0 ? 0 : (idx + 1) % ATTENDANCE_CYCLE.length;
+    return ATTENDANCE_CYCLE[next];
+  };
+
+  const attendanceStatusColor = (status: AttendanceStatus) => {
+    if (status === 'Present') return '#2E7D32';
+    if (status === 'Absent') return '#C62828';
+    if (status === 'Late') return '#ED6C02';
+    return '#1565C0';
+  };
+
+  const attendanceStatusBg = (status: AttendanceStatus) => {
+    if (status === 'Present') return '#E8F5E9';
+    if (status === 'Absent') return '#FFEBEE';
+    if (status === 'Late') return '#FFF3E0';
+    return '#E3F2FD';
+  };
+
+  const getAttendanceStatus = (meetingId: string, studentId: string): AttendanceStatus =>
+    (attendanceRecordMap[`${meetingId}:${studentId}`] || 'Absent') as AttendanceStatus;
+
+  const updateAttendanceRecords = async (meetingId: string, records: Array<{ student_id: string; status: AttendanceStatus; remarks?: string }>, bulkAction?: string) => {
+    try {
+      if (bulkAction) {
+        await api.post(`/attendance/sessions/${meetingId}/records/`, { bulk_action: bulkAction });
+      } else {
+        await api.post(`/attendance/sessions/${meetingId}/records/`, { records });
+      }
+      await fetchAttendanceData();
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'Could not update attendance.');
+    }
+  };
+
+  const createAttendanceSession = async () => {
+    if (!id) return;
+    if (!newAttendanceTitle.trim()) {
+      Alert.alert('Required', 'Session title is required.');
+      return;
+    }
+    try {
+      await api.post(`/course-sections/${id}/attendance/sessions/`, {
+        date: newAttendanceDate.toISOString().slice(0, 10),
+        title: newAttendanceTitle.trim(),
+      });
+      setNewAttendanceTitle('');
+      await fetchAttendanceData();
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'Could not create meeting session.');
+    }
+  };
+
+  const deleteAttendanceSession = (sessionId: string) => {
+    Alert.alert('Delete Session', 'Delete this attendance session?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await api.delete(`/attendance/sessions/${sessionId}/`);
+            if (selectedAttendanceSessionId === sessionId) setSelectedAttendanceSessionId(null);
+            await fetchAttendanceData();
+          } catch (e: any) {
+            Alert.alert('Error', e.message || 'Could not delete session.');
+          }
+        },
+      },
+    ]);
+  };
+
+  const modalTitle = useMemo(() => {
+    const op = editingId ? 'Edit' : 'Add';
+    if (activeTab === 'modules') return `${op} Module`;
+    if (activeTab === 'assignments') return `${op} Assignment`;
+    if (activeTab === 'attendance') return `${op} Attendance`;
+    if (activeTab === 'files') return `${op} Learning Material`;
+    if (activeTab === 'announcements') return `${op} Announcement`;
+    return `${op} Quiz`;
+  }, [activeTab, editingId]);
+
+  const openCreate = () => {
+    setEditingId(null);
+    setForm(EMPTY_FORM);
+    setSelectedCourseMaterialFile(null);
+    const now = new Date();
+    const nextHour = new Date(now.getTime() + 60 * 60 * 1000);
+    setHasDeadline(false);
+    setDeadlineDate(nextHour);
+    setDeadlineHasTime(true);
+    setHasQuizOpenAt(false);
+    setQuizOpenAtDate(now);
+    setQuizOpenHasTime(true);
+    setHasQuizCloseAt(false);
+    setQuizCloseAtDate(nextHour);
+    setQuizCloseHasTime(true);
+    setSelectedWeeklyModuleId(null);
+    setModalVisible(true);
+  };
+
+  const openEdit = (item: WeeklyModule | Activity | CourseFile | Announcement | Quiz) => {
+    setEditingId(item.id);
+    setSelectedCourseMaterialFile(null);
+    setHasDeadline(false);
+    setHasQuizOpenAt(false);
+    setHasQuizCloseAt(false);
+    if (activeTab === 'modules') {
+      const m = item as WeeklyModule;
+      setForm({ ...EMPTY_FORM, week_number: String(m.week_number), title: m.title, description: m.description || '', is_exam_week: m.is_exam_week });
+      setSelectedWeeklyModuleId(null);
+    } else if (activeTab === 'assignments') {
+      const a = item as Activity;
+      setForm({
+        ...EMPTY_FORM,
+        title: a.title,
+        description: a.description || '',
+        points: String(a.points || 100),
+        allowed_file_types: (a as any).allowed_file_types || ['all'],
+      });
+      setSelectedWeeklyModuleId(a.weekly_module_id || null);
+      if (a.deadline) {
+        setHasDeadline(true);
+        setDeadlineDate(new Date(a.deadline));
+      } else {
+        setHasDeadline(false);
+      }
+    } else if (activeTab === 'files') {
+      const f = item as CourseFile;
+      setForm({ ...EMPTY_FORM, file_name: f.file_name, file_url: f.file_url, file_type: f.file_type || '', folder_path: f.folder_path || '/', category: f.category || 'general' });
+      setSelectedWeeklyModuleId(f.weekly_module_id || null);
+    } else if (activeTab === 'announcements') {
+      const a = item as Announcement;
+      setForm({ ...EMPTY_FORM, title: a.title, body: a.body || '' });
+      setSelectedWeeklyModuleId(null);
+    } else {
+      const q = item as Quiz;
+      setForm({
+        ...EMPTY_FORM,
+        title: q.title,
+        instructions: q.instructions || '',
+        attempt_limit: String(q.attempt_limit || 1),
+        time_limit_minutes: q.time_limit_minutes ? String(q.time_limit_minutes) : '',
+      });
+      setSelectedWeeklyModuleId(q.weekly_module_id || null);
+      if (q.open_at) {
+        setHasQuizOpenAt(true);
+        setQuizOpenAtDate(new Date(q.open_at));
+      } else {
+        setHasQuizOpenAt(false);
+      }
+      if (q.close_at) {
+        setHasQuizCloseAt(true);
+        setQuizCloseAtDate(new Date(q.close_at));
+      } else {
+        setHasQuizCloseAt(false);
+      }
+    }
+    setModalVisible(true);
+  };
+
+  const buildPayload = () => {
+    const courseSectionId = id as string;
+    if (activeTab === 'modules') {
+      return {
+        course_section_id: courseSectionId,
+        week_number: Number(form.week_number || '1'),
+        title: form.title.trim(),
+        description: form.description.trim() || null,
+        is_exam_week: form.is_exam_week,
+      };
+    }
+    if (activeTab === 'assignments') {
+      return {
+        course_section_id: courseSectionId,
+        title: form.title.trim(),
+        description: form.description.trim() || null,
+        points: Number(form.points || '100'),
+        deadline: hasDeadline ? deadlineDate.toISOString() : null,
+        weekly_module_id: selectedWeeklyModuleId,
+        allowed_file_types: form.allowed_file_types,
+      };
+    }
+    if (activeTab === 'files') {
+      return {
+        course_section_id: courseSectionId,
+        weekly_module_id: selectedWeeklyModuleId,
+        file_name: form.file_name.trim(),
+        file_url: form.file_url.trim(),
+        file_type: form.file_type.trim() || null,
+        folder_path: form.folder_path.trim() || '/',
+        category: form.category.trim() || 'general',
+      };
+    }
+    if (activeTab === 'announcements') {
+      return {
+        course_section_id: courseSectionId,
+        title: form.title.trim(),
+        body: form.body.trim(),
+      };
+    }
+    return {
+      course_section_id: courseSectionId,
+      title: form.title.trim(),
+      instructions: form.instructions.trim() || null,
+      attempt_limit: Number(form.attempt_limit || '1'),
+      time_limit_minutes: form.time_limit_minutes.trim() ? Number(form.time_limit_minutes) : null,
+      open_at: hasQuizOpenAt ? quizOpenAtDate.toISOString() : null,
+      close_at: hasQuizCloseAt ? quizCloseAtDate.toISOString() : null,
+      weekly_module_id: selectedWeeklyModuleId,
+      is_published: true,
+    };
+  };
+
+  const validate = () => {
+    if (activeTab === 'modules' && !form.title.trim()) return 'Module title is required.';
+    if (activeTab === 'assignments' && !form.title.trim()) return 'Assignment title is required.';
+    if (activeTab === 'files' && (!form.file_name.trim() || (!form.file_url.trim() && !selectedCourseMaterialFile))) {
+      return 'File name and URL are required, or upload a file.';
+    }
+    if (activeTab === 'announcements' && (!form.title.trim() || !form.body.trim())) return 'Title and body are required.';
+    if (activeTab === 'quizzes' && !form.title.trim()) return 'Quiz title is required.';
+    if (activeTab === 'quizzes' && hasQuizOpenAt && hasQuizCloseAt && quizCloseAtDate <= quizOpenAtDate) {
+      return 'Quiz close date must be after open date.';
+    }
+    return null;
+  };
+
+  const saveItem = async () => {
+    const err = validate();
+    if (err) {
+      Alert.alert('Required', err);
+      return;
+    }
+    setSaving(true);
+    const payload = buildPayload();
+    try {
+      if (activeTab === 'files' && selectedCourseMaterialFile) {
+        const formData = new FormData();
+        formData.append('course_section_id', String(id || ''));
+        formData.append('weekly_module_id', selectedWeeklyModuleId || '');
+        formData.append('file_name', form.file_name.trim());
+        if (form.file_type.trim()) formData.append('file_type', form.file_type.trim());
+        if (form.folder_path.trim()) formData.append('folder_path', form.folder_path.trim());
+        if (form.category.trim()) formData.append('category', form.category.trim());
+        formData.append('file', {
+          uri: selectedCourseMaterialFile.uri,
+          name: selectedCourseMaterialFile.name,
+          type: selectedCourseMaterialFile.mimeType,
+        } as any);
+        if (editingId) {
+          await api.patchForm(`${API_PATHS[activeTab]}${editingId}/`, formData);
+        } else {
+          await api.postForm(API_PATHS[activeTab], formData);
+        }
+      } else if (editingId) {
+        await api.patch(`${API_PATHS[activeTab]}${editingId}/`, payload);
+      } else {
+        await api.post(API_PATHS[activeTab], payload);
+      }
+      setModalVisible(false);
+      setEditingId(null);
+      setForm(EMPTY_FORM);
+      setSelectedCourseMaterialFile(null);
+      setSelectedWeeklyModuleId(null);
+      setHasDeadline(false);
+      setHasQuizOpenAt(false);
+      setHasQuizCloseAt(false);
+      await fetchData();
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'Could not save item.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const deleteItem = (itemId: string, tabOverride?: CourseTab) => {
+    const targetTab = tabOverride || activeTab;
+    Alert.alert('Delete', 'Delete this item?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await api.delete(`${API_PATHS[targetTab]}${itemId}/`);
+            await fetchData();
+          } catch (e: any) {
+            Alert.alert('Error', e.message || 'Could not delete item.');
+          }
+        },
+      },
+    ]);
+  };
+
+  const openSubmissionModal = (activity: Activity) => {
+    setSelectedActivity(activity);
+    setSubmissionText(activity.my_submission?.text_content || '');
+    setSelectedSubmissionFiles([]);
+    setSubmissionInlineError(null);
+    setSubmissionSuccessAt(null);
+    setShowSubmissionReview(false);
+    setSubmissionModalVisible(true);
+  };
+
+  const openActivityDetail = (activity: Activity) => {
+    setSelectedActivity(activity);
+    setActivityDetailVisible(true);
+  };
+
+  const openDocumentInApp = (fileUrl: string, fileName?: string, previewFileUrl?: string | null) => {
+    setDocViewerTitle(fileName || fileNameFromUrl(fileUrl) || 'Document');
+    setDocViewerUrl(resolveBackendFileUrl(fileUrl));
+    setDocViewerPreviewUrl(previewFileUrl ? resolveBackendFileUrl(previewFileUrl) : null);
+    setDocViewerVisible(true);
+  };
+
+  const pickSubmissionFile = async () => {
+    const result = await DocumentPicker.getDocumentAsync({
+      type: [
+        'application/pdf',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/zip',
+        'image/png',
+        'image/jpeg',
+      ],
+      copyToCacheDirectory: true,
+      multiple: true,
+    });
+    if (!result.canceled && result.assets.length) {
+      setSubmissionInlineError(null);
+      setSelectedSubmissionFiles((prev) => [
+        ...prev,
+        ...result.assets.map((f) => ({
+          uri: f.uri,
+          name: f.name || `file-${Date.now()}`,
+          mimeType: f.mimeType || 'application/octet-stream',
+          size: f.size,
+        })),
+      ]);
+    }
+  };
+
+  const pickCourseMaterialFile = async () => {
+    const result = await DocumentPicker.getDocumentAsync({
+      type: [
+        'application/pdf',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/zip',
+        'image/png',
+        'image/jpeg',
+      ],
+      copyToCacheDirectory: true,
+      multiple: false,
+    });
+    if (!result.canceled && result.assets[0]) {
+      const f = result.assets[0];
+      const fileName = f.name || `material-${Date.now()}`;
+      const ext = fileName.includes('.') ? fileName.split('.').pop() || '' : '';
+      setSelectedCourseMaterialFile({
+        uri: f.uri,
+        name: fileName,
+        mimeType: f.mimeType || 'application/octet-stream',
+        size: f.size,
+      });
+      setForm((prev) => ({
+        ...prev,
+        file_name: prev.file_name.trim() ? prev.file_name : fileName,
+        file_type: prev.file_type.trim() ? prev.file_type : ext,
+      }));
+    }
+  };
+
+  const pickImageSubmission = async () => {
+    const res = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      quality: 0.8,
+      allowsEditing: false,
+    });
+    if (!res.canceled && res.assets[0]) {
+      const a = res.assets[0];
+      setSubmissionInlineError(null);
+      setSelectedSubmissionFiles((prev) => [
+        ...prev,
+        {
+          uri: a.uri,
+          name: a.fileName || `image-${Date.now()}.jpg`,
+          mimeType: a.mimeType || 'image/jpeg',
+          size: (a as any).fileSize,
+        },
+      ]);
+    }
+  };
+
+  const removeSubmissionFile = (index: number) => {
+    setSelectedSubmissionFiles((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const submitActivity = async () => {
+    if (!selectedActivity) return;
+    if (selectedSubmissionFiles.length === 0) {
+      setSubmissionInlineError('Attach at least one file before submitting.');
+      return;
+    }
+    setSubmissionInlineError(null);
+    setSubmissionSuccessAt(null);
+    setSubmittingActivity(true);
+    try {
+      const formData = new FormData();
+      if (submissionText.trim()) formData.append('text_content', submissionText.trim());
+      selectedSubmissionFiles.forEach((f) => {
+        formData.append('files', { uri: f.uri, name: f.name, type: f.mimeType } as any);
+      });
+      await api.postForm(`/activities/${selectedActivity.id}/submit/`, formData);
+      setSelectedSubmissionFiles([]);
+      setShowSubmissionReview(false);
+      setSubmissionSuccessAt(new Date().toISOString());
+      await fetchData();
+    } catch (e: any) {
+      setSubmissionInlineError(e.message || 'Could not submit activity.');
+    } finally {
+      setSubmittingActivity(false);
+    }
+  };
+
+  const startQuiz = async (quiz: Quiz) => {
+    try {
+      const data = await api.get(`/quizzes/${quiz.id}/take/`);
+      setSelectedQuiz(quiz);
+      setCurrentQuizAttemptId(data.attempt_id || null);
+      setQuizTimeRemaining(
+        typeof data.time_remaining_seconds === 'number' ? data.time_remaining_seconds : null,
+      );
+      setQuizQuestions(data.questions || []);
+      const prefilled: Record<string, { selected_choice_id?: string; text_answer?: string }> = {};
+      (data.answers || []).forEach((a: any) => {
+        prefilled[a.question_id] = {
+          selected_choice_id: a.selected_choice_id || undefined,
+          text_answer: a.text_answer || '',
+        };
+      });
+      setQuizAnswers(prefilled);
+      setQuizModalVisible(true);
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'Could not open quiz.');
+    }
+  };
+
+  const confirmAndStartQuiz = (quiz: Quiz) => {
+    Alert.alert(
+      'Start Quiz',
+      `Are you sure you want to start "${quiz.title}"?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Start',
+          onPress: async () => {
+            setQuizInfoModalVisible(false);
+            await startQuiz(quiz);
+          },
+        },
+      ],
+    );
+  };
+
+  const submitQuiz = async () => {
+    if (!selectedQuiz) return;
+    setQuizSubmitting(true);
+    try {
+      const submittedQuiz = selectedQuiz;
+      const answers = quizQuestions.map((q) => ({
+        question_id: q.id,
+        selected_choice_id: quizAnswers[q.id]?.selected_choice_id || null,
+        text_answer: quizAnswers[q.id]?.text_answer || '',
+      }));
+      const submitResp = await api.post(`/quizzes/${submittedQuiz.id}/submit-attempt/`, {
+        attempt_id: currentQuizAttemptId,
+        answers,
+      });
+      setQuizModalVisible(false);
+      setSelectedQuiz(null);
+      setCurrentQuizAttemptId(null);
+      setQuizTimeRemaining(null);
+      setQuizQuestions([]);
+      setQuizAnswers({});
+      await fetchData();
+      try {
+        const result = await api.get(`/quizzes/${submittedQuiz.id}/my-latest-attempt/`);
+        setQuizResult(result);
+      } catch {
+        setQuizResult({
+          attempt: {
+            score: submitResp?.score ?? null,
+            max_score: submitResp?.max_score ?? null,
+            pending_manual_grading: !!submitResp?.pending_manual_grading,
+          },
+          attempt_limit: submittedQuiz.attempt_limit,
+          attempts_remaining: 0,
+          attempt_stats: {
+            graded_count: 0,
+            average_score: null,
+            lowest_score: null,
+            highest_score: null,
+          },
+          attempts: [],
+        });
+      }
+      setQuizResultModalVisible(true);
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'Could not submit quiz.');
+    } finally {
+      setQuizSubmitting(false);
+    }
+  };
+
+  const saveQuizProgress = async () => {
+    if (!selectedQuiz || !currentQuizAttemptId) return;
+    const answers = quizQuestions.map((q) => ({
+      question_id: q.id,
+      selected_choice_id: quizAnswers[q.id]?.selected_choice_id || null,
+      text_answer: quizAnswers[q.id]?.text_answer || '',
+    }));
+    await api.post(`/quizzes/${selectedQuiz.id}/save-progress/`, {
+      attempt_id: currentQuizAttemptId,
+      answers,
+    });
+  };
+
+  const handleQuizCancel = () => {
+    Alert.alert(
+      'Leave Quiz?',
+      'Your timer will continue. You can resume this quiz later.',
+      [
+        { text: 'Stay', style: 'cancel' },
+        {
+          text: 'Leave',
+          onPress: async () => {
+            try {
+              await saveQuizProgress();
+            } catch {
+              // Best effort; timer/session still persists server-side.
+            } finally {
+              setQuizModalVisible(false);
+              setSelectedQuiz(null);
+              setCurrentQuizAttemptId(null);
+              setQuizTimeRemaining(null);
+              setQuizQuestions([]);
+              setQuizAnswers({});
+              fetchData();
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  const viewQuizResult = async (quiz: Quiz) => {
+    try {
+      const data = await api.get(`/quizzes/${quiz.id}/my-latest-attempt/`);
+      setQuizResult(data);
+      setQuizResultModalVisible(true);
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'Could not load quiz result.');
+    }
+  };
+
+  const openActivityGrading = async (activity: Activity) => {
+    setSelectedGradeActivity(activity);
+    setGradingLoading(true);
+    try {
+      const data = await api.get(`/activities/${activity.id}/submissions/`);
+      const mapped = (data || []).map((d: any, idx: number) => ({
+        ...d,
+        _score: d.score ?? '',
+        _feedback: d.feedback ?? '',
+        _rowKey: d.id || d.student_id || `row-${idx}`,
+      }));
+      setGradingItems(mapped);
+      setExpandedGradeItemKey(mapped[0]?._rowKey || null);
+      setGradeModalVisible(true);
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'Could not load submissions.');
+    } finally {
+      setGradingLoading(false);
+    }
+  };
+
+  const saveSubmissionGrade = async (item: any) => {
+    try {
+      await api.patch(`/activity-submissions/${item.id}/grade/`, {
+        score: item._score === '' ? null : Number(item._score),
+        feedback: item._feedback || null,
+      });
+      if (selectedGradeActivity) await openActivityGrading(selectedGradeActivity);
+      await fetchData();
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'Could not save grade.');
+    }
+  };
+
+  const openQuizGrading = async (quiz: Quiz) => {
+    setQuizGradingLoading(true);
+    try {
+      const data = await api.get(`/quizzes/${quiz.id}/grading/`);
+      const prepared = (data || []).map((attempt: any, idx: number) => ({
+        ...attempt,
+        _rowKey: attempt.attempt_id || `${attempt.student_id || 'student'}-${idx}`,
+        answers: (attempt.answers || []).map((ans: any) => ({
+          ...ans,
+          _points: String(ans.points_awarded ?? ans.points ?? 0),
+        })),
+      }));
+      setQuizGradingItems(prepared);
+      setExpandedQuizAttemptKey(prepared[0]?._rowKey || null);
+      setQuizGradingModalVisible(true);
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'Could not load quiz grading list.');
+    } finally {
+      setQuizGradingLoading(false);
+    }
+  };
+
+  const gradeQuizAnswer = async (answerId: string, points: string, isCorrect?: boolean) => {
+    try {
+      await api.patch(`/quiz-answers/${answerId}/grade/`, {
+        points_awarded: points === '' ? 0 : Number(points),
+        is_correct: isCorrect ?? null,
+      });
+      const quizId = quizGradingItems?.[0]?.quiz_id || selectedQuiz?.id;
+      if (quizId) {
+        const refreshed = await api.get(`/quizzes/${quizId}/grading/`);
+        const prepared = (refreshed || []).map((attempt: any, idx: number) => ({
+          ...attempt,
+          _rowKey: attempt.attempt_id || `${attempt.student_id || 'student'}-${idx}`,
+          answers: (attempt.answers || []).map((ans: any) => ({
+            ...ans,
+            _points: String(ans.points_awarded ?? ans.points ?? 0),
+          })),
+        }));
+        setQuizGradingItems(prepared);
+        if (!prepared.some((p: any) => p._rowKey === expandedQuizAttemptKey)) {
+          setExpandedQuizAttemptKey(prepared[0]?._rowKey || null);
+        }
+      }
+      await fetchData();
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'Could not grade answer.');
+    }
+  };
+
+  const addQuickQuestion = () => {
+    setQuickQuizQuestions((prev) => [
+      ...prev,
+      {
+        question_text: '',
+        question_type: 'multiple_choice',
+        points: 1,
+        choices: [
+          { choice_text: '', is_correct: true, sort_order: 0 },
+          { choice_text: '', is_correct: false, sort_order: 1 },
+          { choice_text: '', is_correct: false, sort_order: 2 },
+          { choice_text: '', is_correct: false, sort_order: 3 },
+        ],
+      },
+    ]);
+  };
+
+  const createQuickQuiz = async () => {
+    if (!id) return;
+    if (!quickQuizTitle.trim()) {
+      Alert.alert('Required', 'Quiz title is required.');
+      return;
+    }
+    setCreatingQuickQuiz(true);
+    try {
+      const payloadQuestions = quickQuizQuestions
+        .filter((q) => q.question_text.trim())
+        .map((q: any, idx: number) => ({
+          question_text: q.question_text.trim(),
+          question_type: q.question_type,
+          points: Number(q.points || 1),
+          sort_order: idx,
+          choices: q.question_type === 'essay'
+            ? []
+            : (q.choices || []).map((c: any, cIdx: number) => ({
+                choice_text: c.choice_text,
+                is_correct: !!c.is_correct,
+                sort_order: cIdx,
+              })),
+        }));
+
+      if (quickQuizHasOpenAt && quickQuizHasCloseAt && quickQuizCloseAt <= quickQuizOpenAt) {
+        Alert.alert('Invalid Dates', 'Close date/time must be after open date/time.');
+        setCreatingQuickQuiz(false);
+        return;
+      }
+
+      await api.post('/quizzes/quick-create/', {
+        course_section_id: id,
+        title: quickQuizTitle.trim(),
+        weekly_module_id: quickQuizWeeklyModuleId,
+        instructions: quickQuizInstructions.trim() || null,
+        attempt_limit: Number(quickQuizAttemptLimit || '1'),
+        time_limit_minutes: Number(quickQuizTimeLimit || '30'),
+        open_at: quickQuizHasOpenAt ? quickQuizOpenAt.toISOString() : null,
+        close_at: quickQuizHasCloseAt ? quickQuizCloseAt.toISOString() : null,
+        questions: payloadQuestions,
+        is_published: true,
+        show_results: true,
+      });
+      setQuickQuizBuilderVisible(false);
+      setQuickQuizTitle('');
+      setQuickQuizInstructions('');
+      setQuickQuizWeeklyModuleId(null);
+      setQuickQuizAttemptLimit('1');
+      setQuickQuizTimeLimit('30');
+      setQuickQuizHasOpenAt(false);
+      setQuickQuizHasCloseAt(false);
+      setQuickQuizQuestions([]);
+      await fetchData();
+      Alert.alert('Success', 'Quiz created.');
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'Could not create quick quiz.');
+    } finally {
+      setCreatingQuickQuiz(false);
+    }
+  };
+
+  const openPrimaryAdd = () => {
+    if (activeTab === 'quizzes') {
+      setQuickQuizTitle('');
+      setQuickQuizInstructions('');
+      setQuickQuizWeeklyModuleId(null);
+      setQuickQuizAttemptLimit('1');
+      setQuickQuizTimeLimit('30');
+      setQuickQuizHasOpenAt(false);
+      setQuickQuizOpenAt(new Date());
+      setQuickQuizOpenHasTime(true);
+      setQuickQuizHasCloseAt(false);
+      setQuickQuizCloseAt(new Date(Date.now() + 60 * 60 * 1000));
+      setQuickQuizCloseHasTime(true);
+      setQuickQuizQuestions([]);
+      setQuickQuizBuilderVisible(true);
+      return;
+    }
+    openCreate();
+  };
+
+  const openQuizFromModules = (quiz: Quiz) => {
+    if (canManage) {
+      setActiveTab('quizzes');
+      openEdit(quiz);
+      return;
+    }
+    openQuizInfo(quiz);
+  };
+
+  const openQuizInfo = async (quiz: Quiz) => {
+    setSelectedQuizForInfo(quiz);
+    setQuizInfoModalVisible(true);
+    try {
+      const data = await api.get(`/quizzes/${quiz.id}/my-latest-attempt/`);
+      setQuizInfoStats(data);
+    } catch {
+      setQuizInfoStats(null);
+    }
+  };
+
+  return (
+    <View style={[styles.container, { backgroundColor: colors.background }]}> 
+      <LinearGradient colors={[Colors.primary, Colors.primaryDark]} style={styles.banner}>
+        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+          <Ionicons name="chevron-back" size={24} color="#FFFFFF" />
+        </TouchableOpacity>
+        <View style={styles.bannerContent}>
+          <Text style={styles.bannerTitle} numberOfLines={2}>{title || 'Course'}</Text>
+        </View>
+        {canManage && activeTab !== 'modules' && activeTab !== 'attendance' && activeTab !== 'grades' && (
+          <TouchableOpacity style={styles.addBtn} onPress={openPrimaryAdd}>
+            <Ionicons name="add-circle-outline" size={26} color={Colors.accentGold} />
+          </TouchableOpacity>
+        )}
+      </LinearGradient>
+
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={[styles.tabScroll, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}> 
+        {visibleTabs.map((tab) => (
+          <TouchableOpacity key={tab.key} style={[styles.tab, activeTab === tab.key && styles.tabActive]} onPress={() => setActiveTab(tab.key)}>
+            <Ionicons name={tab.icon as any} size={15} color={activeTab === tab.key ? Colors.primary : colors.textSecondary} />
+            <Text style={[styles.tabText, { color: activeTab === tab.key ? Colors.primary : colors.textSecondary }]}>{tab.label}</Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+
+      {loading ? (
+        <View style={styles.centered}><ActivityIndicator size="large" color={Colors.primary} /></View>
+      ) : (
+        <ScrollView style={styles.tabContent} contentContainerStyle={styles.tabContentInner} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />}>
+          {activeTab === 'modules' && (
+            <>
+              {modules.length === 0 ? <EmptyState icon="📋" title="No modules yet" /> :
+              modules.map((mod) => {
+                const expanded = expandedModules[mod.id] !== false;
+                const progress = moduleProgress(mod.id);
+                const modAssignments = activities.filter((a) => a.weekly_module_id === mod.id);
+                const modQuizzes = quizzes.filter((q) => q.weekly_module_id === mod.id);
+                const modFiles = files.filter((f) => f.weekly_module_id === mod.id);
+                return (
+                  <View key={mod.id} style={[styles.moduleCanvasCard, { borderColor: '#E0E0E0', backgroundColor: '#FFFFFF' }]}>
+                    <TouchableOpacity style={styles.moduleCanvasHeader} onPress={() => toggleModuleExpanded(mod.id)} activeOpacity={0.9}>
+                      <View style={styles.moduleCanvasHeaderLeft}>
+                        <Text style={styles.moduleCanvasWeekLabel}>{mod.is_exam_week ? 'Exam Week' : `Week ${mod.week_number}`}</Text>
+                        <Text style={styles.moduleCanvasTitle}>{mod.title}</Text>
+                        {!!mod.description && <Text style={styles.moduleCanvasDesc} numberOfLines={expanded ? 3 : 1}>{mod.description}</Text>}
+                      </View>
+                      <View style={styles.moduleCanvasHeaderRight}>
+                        {canManage && (
+                          <TouchableOpacity
+                            style={[styles.statusBadge, mod.is_published ? styles.statusBadgePublished : styles.statusBadgeDraft]}
+                            onPress={() => togglePublishByType('module', mod)}
+                          >
+                            <Text style={[styles.statusBadgeText, mod.is_published ? styles.statusBadgeTextPublished : styles.statusBadgeTextDraft]}>
+                              {mod.is_published ? 'Published' : 'Draft'}
+                            </Text>
+                          </TouchableOpacity>
+                        )}
+                        <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={18} color="#6B6B6B" />
+                      </View>
+                    </TouchableOpacity>
+
+                    {!canManage && (
+                      <View style={styles.moduleProgressWrap}>
+                        <View style={styles.moduleProgressTrack}>
+                          <View style={[styles.moduleProgressFill, { width: `${progress.percent}%` }]} />
+                        </View>
+                        <Text style={styles.moduleProgressText}>{progress.completed}/{progress.total} completed</Text>
+                      </View>
+                    )}
+
+                    {expanded && (
+                      <View style={styles.moduleCanvasBody}>
+                        {(() => {
+                          const moduleItems = [
+                            ...modAssignments.map((a) => ({
+                              key: `a-${a.id}`,
+                              kind: 'assignment' as const,
+                              title: a.title,
+                              meta: a.deadline ? `Due ${formatDate(a.deadline)}` : 'No due date',
+                              locked: !a.is_published,
+                              complete: !!a.my_submission,
+                              published: !!a.is_published,
+                              icon: 'document-text-outline' as const,
+                              iconColor: Colors.primary,
+                              onPress: () => openActivityDetail(a),
+                              onTogglePublish: () => togglePublishByType('assignment', a),
+                            })),
+                            ...modQuizzes.map((q) => {
+                              const now = new Date();
+                              return {
+                                key: `q-${q.id}`,
+                                kind: 'quiz' as const,
+                                title: q.title,
+                                meta: q.close_at ? `Closes ${formatDate(q.close_at)}` : 'No close date',
+                                locked: !q.is_published || (!!q.open_at && new Date(q.open_at) > now) || (!!q.close_at && new Date(q.close_at) < now),
+                                complete: (q.my_attempt?.attempts_used ?? 0) > 0,
+                                published: !!q.is_published,
+                                icon: 'rocket-outline' as const,
+                                iconColor: Colors.accentGold,
+                                onPress: () => openQuizFromModules(q),
+                                onTogglePublish: () => togglePublishByType('quiz', q),
+                              };
+                            }),
+                            ...modFiles.map((f) => {
+                              const hidden = !f.is_visible;
+                              return {
+                                key: `f-${f.id}`,
+                                kind: 'file' as const,
+                                title: f.file_name,
+                                meta: `Material • ${formatDate(f.created_at)}`,
+                                locked: hidden,
+                                complete: !hidden,
+                                published: !!f.is_visible,
+                                icon: 'cloud-download-outline' as const,
+                                iconColor: Colors.primary,
+                                onPress: () => f.file_url && openDocumentInApp(f.file_url, f.file_name, f.preview_file_url),
+                                onTogglePublish: () => togglePublishByType('file', f),
+                              };
+                            }),
+                          ];
+
+                          if (moduleItems.length === 0) return <Text style={styles.moduleEmptyText}>No module contents yet.</Text>;
+
+                          return moduleItems.map((item) => (
+                            <TouchableOpacity
+                              key={item.key}
+                              style={[styles.moduleCanvasItem, item.locked && styles.moduleCanvasItemDisabled]}
+                              onPress={item.onPress}
+                              activeOpacity={0.85}
+                            >
+                              <View style={styles.moduleItemMain}>
+                                <Ionicons name={item.icon} size={16} color={item.iconColor} />
+                                <View style={{ flex: 1 }}>
+                                  <Text style={styles.moduleItemTitle} numberOfLines={1}>{item.title}</Text>
+                                  {!compactMeta && <Text style={styles.moduleItemMeta}>{item.meta}</Text>}
+                                  {!canManage && item.kind === 'assignment' && <Text style={styles.moduleRequirement}>Submit this assignment</Text>}
+                                  {!canManage && item.kind === 'quiz' && <Text style={styles.moduleRequirement}>Complete quiz requirement</Text>}
+                                </View>
+                              </View>
+                              <View style={styles.moduleItemRight}>
+                                {!canManage && <Ionicons name={item.locked ? 'lock-closed-outline' : (item.complete ? 'checkmark-circle' : 'ellipse-outline')} size={18} color={item.locked ? '#6B7280' : (item.complete ? '#16A34A' : '#9CA3AF')} />}
+                                {canManage && (
+                                  <>
+                                    <TouchableOpacity onPress={item.onTogglePublish}>
+                                      <Ionicons name={item.published ? 'checkmark-circle' : 'ellipse-outline'} size={18} color={item.published ? '#16A34A' : '#9CA3AF'} />
+                                    </TouchableOpacity>
+                                    <Ionicons name="reorder-three-outline" size={18} color="#9CA3AF" />
+                                  </>
+                                )}
+                              </View>
+                            </TouchableOpacity>
+                          ));
+                        })()}
+
+                        {canManage && (
+                          <View style={styles.moduleFooterActions}>
+                            <TouchableOpacity style={styles.moduleFooterBtn} onPress={() => addItemToModule('assignments', mod.id)}><Text style={styles.moduleFooterBtnText}>+ Assignment</Text></TouchableOpacity>
+                            <TouchableOpacity style={styles.moduleFooterBtn} onPress={() => addItemToModule('quizzes', mod.id)}><Text style={styles.moduleFooterBtnText}>+ Quiz</Text></TouchableOpacity>
+                            <TouchableOpacity style={styles.moduleFooterBtn} onPress={() => addItemToModule('files', mod.id)}><Text style={styles.moduleFooterBtnText}>+ File/Link</Text></TouchableOpacity>
+                          </View>
+                        )}
+                      </View>
+                    )}
+                  </View>
+                );
+              })}
+            </>
+          )}
+
+          {activeTab === 'assignments' && (
+            <>
+            {!canManage && !!studentAttendanceSummary && (
+              <View style={styles.attendanceSummaryCard}>
+                <Text style={styles.attSummaryTitle}>Attendance Summary</Text>
+                <View style={styles.attProgressTrack}>
+                  <View style={[styles.attProgressFill, { width: `${studentAttendanceSummary.attendance_percentage || 0}%` }]} />
+                </View>
+                <Text style={styles.attSummaryPct}>{studentAttendanceSummary.attendance_percentage || 0}% Overall Attendance</Text>
+                <View style={styles.attSummaryStats}>
+                  <Text style={styles.attSummaryStat}>Sessions: {studentAttendanceSummary.total_sessions || 0}</Text>
+                  <Text style={styles.attSummaryStat}>Present: {studentAttendanceSummary.present_count || 0}</Text>
+                  <Text style={styles.attSummaryStat}>Absent: {studentAttendanceSummary.absent_count || 0}</Text>
+                  <Text style={styles.attSummaryStat}>Late: {studentAttendanceSummary.late_count || 0}</Text>
+                </View>
+                <TouchableOpacity style={styles.inlineBtn} onPress={() => setAttendanceHistoryModalVisible(true)}>
+                  <Text style={styles.inlineBtnText}>View Attendance History</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+            {activities.length === 0 ? <EmptyState icon="📝" title="No assignments yet" /> :
+            activities.map((act) => (
+              <TouchableOpacity
+                key={act.id}
+                style={[
+                  styles.actCard,
+                  { backgroundColor: colors.surface },
+                  !canManage && !!act.deadline && new Date(act.deadline) < new Date() && !act.my_submission && styles.missingCard,
+                  Shadows.sm,
+                ]}
+                activeOpacity={0.9}
+                onPress={() => openActivityDetail(act)}
+              >
+                <View style={styles.actHeader}>
+                  <Ionicons name="document-text-outline" size={20} color={Colors.primaryLight} />
+                  <View style={styles.actInfo}>
+                    <Text
+                      style={[
+                        styles.actTitle,
+                        { color: colors.textPrimary },
+                        !canManage && !!act.deadline && new Date(act.deadline) < new Date() && !act.my_submission && styles.missingTitle,
+                      ]}
+                    >
+                      {act.title}
+                    </Text>
+                    {!!act.deadline && <Text style={[styles.actDeadline, { color: new Date(act.deadline) < new Date() ? Colors.accentRed : colors.textSecondary }]}>Due: {formatDate(act.deadline)}</Text>}
+                  </View>
+                  <View style={styles.pointsBadge}><Text style={styles.pointsText}>{act.points}pts</Text></View>
+                </View>
+                {!canManage && !!act.deadline && new Date(act.deadline) < new Date() && !act.my_submission && (
+                  <View style={styles.missingBadge}><Text style={styles.missingBadgeText}>Missing</Text></View>
+                )}
+                <Text style={[styles.topicBadge, { color: colors.textSecondary }]}>{weekLabel(act.weekly_module_id)}</Text>
+                {!!act.description && <Text style={[styles.actDesc, { color: colors.textSecondary }]} numberOfLines={2}>{act.description}</Text>}
+                {!canManage && (
+                  <View style={styles.studentActionRow}>
+                    {act.my_submission?.score != null ? (
+                      <Text style={styles.gradePill}>Grade: {act.my_submission.score}/{act.points}</Text>
+                    ) : (
+                      <Text style={styles.pendingPill}>{act.my_submission ? 'Submitted' : 'Not submitted'}</Text>
+                    )}
+                    <TouchableOpacity style={styles.inlineBtn} onPress={() => openSubmissionModal(act)}>
+                      <Text style={styles.inlineBtnText}>{act.my_submission ? 'Update Submission' : 'Submit Activity'}</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+                {canManage && (
+                  <TouchableOpacity style={styles.inlineBtn} onPress={() => openActivityGrading(act)}>
+                    <Text style={styles.inlineBtnText}>Grade Submissions</Text>
+                  </TouchableOpacity>
+                )}
+                {canManage && <ItemActions onEdit={() => openEdit(act)} onDelete={() => deleteItem(act.id)} />}
+              </TouchableOpacity>
+            ))}
+            </>
+          )}
+
+          {activeTab === 'attendance' && (
+            attendanceLoading ? (
+              <View style={styles.centered}><ActivityIndicator size="large" color={Colors.primary} /></View>
+            ) : canManage ? (
+              <View>
+                <View style={styles.attTeacherCreateCard}>
+                  <Text style={styles.attSummaryTitle}>Create Meeting Session</Text>
+                  <Field label="Session Title" value={newAttendanceTitle} onChangeText={setNewAttendanceTitle} />
+                  <DateTimePicker
+                    value={newAttendanceDate}
+                    hasTime={false}
+                    onToggleTime={() => {}}
+                    onChange={setNewAttendanceDate}
+                  />
+                  <TouchableOpacity style={[styles.inlineBtn, { marginTop: 10 }]} onPress={createAttendanceSession}>
+                    <Text style={styles.inlineBtnText}>Create Session</Text>
+                  </TouchableOpacity>
+                </View>
+
+                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                  <View style={styles.attTable}>
+                    <View style={styles.attHeaderRow}>
+                      <Text style={[styles.attCellHeader, styles.attStudentCol]}>Student</Text>
+                      {attendanceSessions.map((s) => (
+                        <TouchableOpacity key={s.id} style={styles.attSessionHeaderCell} onPress={() => setSelectedAttendanceSessionId(s.id)}>
+                          <Text style={styles.attCellHeader} numberOfLines={2}>{s.title}</Text>
+                          <Text style={styles.attSessionDate}>{formatDate(s.date)}</Text>
+                          <TouchableOpacity onPress={() => deleteAttendanceSession(s.id)}>
+                            <Ionicons name="trash-outline" size={14} color="#C62828" />
+                          </TouchableOpacity>
+                        </TouchableOpacity>
+                      ))}
+                      <Text style={[styles.attCellHeader, styles.attPctCol]}>%</Text>
+                    </View>
+
+                    {attendanceStudents.map((stu) => (
+                      <View key={stu.student_id} style={styles.attDataRow}>
+                        <Text style={[styles.attStudentName, styles.attStudentCol]} numberOfLines={1}>{stu.student_name}</Text>
+                        {attendanceSessions.map((s) => {
+                          const current = getAttendanceStatus(s.id, stu.student_id);
+                          return (
+                            <TouchableOpacity
+                              key={`${s.id}:${stu.student_id}`}
+                              style={[styles.attStatusCell, { backgroundColor: attendanceStatusBg(current) }]}
+                              onPress={() =>
+                                updateAttendanceRecords(s.id, [
+                                  { student_id: stu.student_id, status: nextAttendanceStatus(current) },
+                                ])
+                              }
+                            >
+                              <Text style={[styles.attStatusText, { color: attendanceStatusColor(current) }]}>{current}</Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                        <Text style={[styles.attPctValue, styles.attPctCol]}>{stu.attendance_percentage || 0}%</Text>
+                      </View>
+                    ))}
+                  </View>
+                </ScrollView>
+
+                {!!selectedAttendanceSessionId && (
+                  <View style={styles.attBulkRow}>
+                    <TouchableOpacity
+                      style={styles.moduleFooterBtn}
+                      onPress={() => updateAttendanceRecords(selectedAttendanceSessionId, [], 'mark_all_present')}
+                    >
+                      <Text style={styles.moduleFooterBtnText}>Mark All Present</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.moduleFooterBtn}
+                      onPress={() => updateAttendanceRecords(selectedAttendanceSessionId, [], 'clear_all')}
+                    >
+                      <Text style={styles.moduleFooterBtnText}>Clear All</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </View>
+            ) : (
+              <View style={styles.attendanceSummaryCard}>
+                <Text style={styles.attSummaryTitle}>Attendance Overview</Text>
+                <View style={styles.attProgressTrack}>
+                  <View style={[styles.attProgressFill, { width: `${studentAttendanceSummary?.attendance_percentage || 0}%` }]} />
+                </View>
+                <Text style={styles.attSummaryPct}>{studentAttendanceSummary?.attendance_percentage || 0}% Overall Attendance</Text>
+              </View>
+            )
+          )}
+
+          {activeTab === 'files' && (
+            files.length === 0 ? <EmptyState icon="📁" title="No files uploaded yet" /> :
+            files.map((file) => {
+              const ext = file.file_type || file.file_name.split('.').pop() || 'file';
+              const iconName = FILE_ICONS[ext] || 'document-outline';
+              return (
+                <View key={file.id} style={[styles.fileRow, { backgroundColor: colors.surface }, Shadows.sm]}>
+                  <TouchableOpacity style={styles.fileMainRow} onPress={() => file.file_url && openDocumentInApp(file.file_url, file.file_name, file.preview_file_url)} activeOpacity={0.85}>
+                    <View style={[styles.fileIcon, { backgroundColor: Colors.primary + '15' }]}><Ionicons name={iconName as any} size={22} color={Colors.primary} /></View>
+                    <View style={styles.fileInfo}>
+                      <Text style={[styles.fileName, { color: colors.textPrimary }]} numberOfLines={1}>{file.file_name}</Text>
+                      <Text style={[styles.fileMeta, { color: colors.textSecondary }]}>
+                        {weekLabel(file.weekly_module_id)} · {file.folder_path !== '/' ? file.folder_path : 'General'} · {formatDate(file.created_at)}
+                      </Text>
+                    </View>
+                    <Ionicons name="download-outline" size={18} color={colors.textSecondary} />
+                  </TouchableOpacity>
+                  {canManage && <ItemActions onEdit={() => openEdit(file)} onDelete={() => deleteItem(file.id)} />}
+                </View>
+              );
+            })
+          )}
+
+          {activeTab === 'announcements' && (
+            announcements.length === 0 ? <EmptyState icon="📢" title="No announcements yet" /> :
+            announcements.map((ann) => (
+              <View key={ann.id} style={[styles.annCard, { backgroundColor: colors.surface }, Shadows.sm]}>
+                <View style={styles.annHeader}>
+                  <Ionicons name="megaphone-outline" size={18} color={Colors.primary} />
+                  <Text style={[styles.annTitle, { color: colors.textPrimary }]}>{ann.title}</Text>
+                  {canManage && <ItemActions onEdit={() => openEdit(ann)} onDelete={() => deleteItem(ann.id)} />}
+                </View>
+                <Text style={[styles.annBody, { color: colors.textSecondary }]}>{ann.body}</Text>
+                <Text style={[styles.annDate, { color: colors.mutedForeground }]}>{formatDate(ann.created_at)}</Text>
+              </View>
+            ))
+          )}
+
+          {activeTab === 'quizzes' && (
+            <>
+              {quizzes.length === 0 ? <EmptyState icon="❓" title="No quizzes yet" /> :
+            quizzes.map((quiz) => {
+              const now = new Date();
+              const isOpen = (!quiz.open_at || new Date(quiz.open_at) <= now) && (!quiz.close_at || new Date(quiz.close_at) >= now);
+              const isMissing = !canManage && !!quiz.close_at && new Date(quiz.close_at) < now && ((quiz.my_attempt?.attempts_used || 0) <= 0);
+              return (
+                <TouchableOpacity
+                  key={quiz.id}
+                  style={[styles.quizCard, { backgroundColor: colors.surface }, isMissing && styles.missingCard, Shadows.sm]}
+                  activeOpacity={0.9}
+                  onPress={() => {
+                    if (canManage) return;
+                    openQuizInfo(quiz);
+                  }}
+                >
+                  <View style={styles.quizHeader}>
+                    <View style={[styles.quizStatusDot, { backgroundColor: isOpen ? '#2E7D32' : '#9E9E9E' }]} />
+                    <Text style={[styles.quizTitle, { color: colors.textPrimary }, isMissing && styles.missingTitle]}>{quiz.title}</Text>
+                    <View style={[styles.quizBadge, { backgroundColor: isOpen ? '#2E7D3220' : colors.muted }]}><Text style={[styles.quizBadgeText, { color: isOpen ? '#2E7D32' : colors.textSecondary }]}>{isOpen ? 'Open' : 'Closed'}</Text></View>
+                  </View>
+                  {isMissing && (
+                    <View style={styles.missingBadge}><Text style={styles.missingBadgeText}>Missing</Text></View>
+                  )}
+                  <View style={styles.quizMeta}>
+                    {!!quiz.time_limit_minutes && <View style={styles.quizMetaItem}><Ionicons name="timer-outline" size={13} color={colors.textSecondary} /><Text style={[styles.quizMetaText, { color: colors.textSecondary }]}>{quiz.time_limit_minutes} min</Text></View>}
+                    <View style={styles.quizMetaItem}><Ionicons name="refresh-outline" size={13} color={colors.textSecondary} /><Text style={[styles.quizMetaText, { color: colors.textSecondary }]}>{quiz.attempt_limit} attempt{quiz.attempt_limit !== 1 ? 's' : ''}</Text></View>
+                    {!!quiz.close_at && <View style={styles.quizMetaItem}><Ionicons name="calendar-outline" size={13} color={colors.textSecondary} /><Text style={[styles.quizMetaText, { color: colors.textSecondary }]}>Closes {formatDate(quiz.close_at)}</Text></View>}
+                  </View>
+                  <Text style={[styles.topicBadge, { color: colors.textSecondary }]}>{weekLabel(quiz.weekly_module_id)}</Text>
+                  {!canManage && (
+                    <View style={styles.studentActionRow}>
+                      {(() => {
+                        const action = getQuizAction(quiz);
+                        const actionStyle = QUIZ_ACTION_STYLES[action.variant];
+                        return (
+                          <TouchableOpacity
+                            style={[
+                              styles.startQuizBtn,
+                              {
+                                backgroundColor: actionStyle.backgroundColor,
+                                borderColor: actionStyle.borderColor,
+                              },
+                              action.disabled && { opacity: 0.55 },
+                            ]}
+                            disabled={action.disabled}
+                            onPress={action.onPress}
+                          >
+                            <Text style={[styles.startQuizText, { color: actionStyle.textColor }]}>{action.label}</Text>
+                          </TouchableOpacity>
+                        );
+                      })()}
+                      <Text style={styles.pendingPill}>
+                        Attempts: {quiz.my_attempt?.attempts_used ?? 0}/{quiz.my_attempt?.attempt_limit ?? quiz.attempt_limit}
+                      </Text>
+                    </View>
+                  )}
+                  {canManage && (
+                    <TouchableOpacity style={styles.inlineBtn} onPress={() => openQuizGrading(quiz)}>
+                      <Text style={styles.inlineBtnText}>Review & Grade</Text>
+                    </TouchableOpacity>
+                  )}
+                  {canManage && <ItemActions onEdit={() => openEdit(quiz)} onDelete={() => deleteItem(quiz.id)} />}
+                </TouchableOpacity>
+              );
+            })}
+            </>
+          )}
+
+          {activeTab === 'grades' && canManage && (
+            <View style={styles.gradesExportCard}>
+              <View style={styles.gradesExportHeader}>
+                <Ionicons name="download-outline" size={20} color={Colors.primary} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.gradesExportTitle}>Export Section Grades</Text>
+                  <Text style={styles.gradesExportMeta}>Downloads all enrolled students with assignment and quiz grades.</Text>
+                </View>
+              </View>
+              <View style={[styles.gradesExportStatusBadge, { backgroundColor: gradeExportStatusUi.bg }]}>
+                <Text style={[styles.gradesExportStatusText, { color: gradeExportStatusUi.fg }]}>{gradeExportStatusUi.text}</Text>
+              </View>
+              <TouchableOpacity
+                style={[styles.gradesExportBtn, exportingGrades && { opacity: 0.7 }]}
+                onPress={exportGradesCsv}
+                disabled={exportingGrades}
+              >
+                {exportingGrades ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <>
+                    <Ionicons name="cloud-download-outline" size={16} color="#FFFFFF" />
+                    <Text style={styles.gradesExportBtnText}>Export CSV</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+          )}
+
+          <View style={{ height: 80 }} />
+        </ScrollView>
+      )}
+
+      {canManage && activeTab !== 'modules' && activeTab !== 'attendance' && activeTab !== 'grades' && (
+        <TouchableOpacity style={styles.fab} activeOpacity={0.85} onPress={openPrimaryAdd}>
+          <Ionicons name="add" size={26} color="#FFFFFF" />
+        </TouchableOpacity>
+      )}
+
+      <Modal visible={modalVisible} animationType="slide" onRequestClose={() => setModalVisible(false)}>
+        <KeyboardAvoidingView style={[styles.modalWrap, { backgroundColor: colors.background }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <View style={[styles.modalHeader, { borderBottomColor: colors.border, backgroundColor: colors.surface }]}> 
+            <TouchableOpacity onPress={() => setModalVisible(false)}><Text style={[styles.modalCancel, { color: colors.textSecondary }]}>Cancel</Text></TouchableOpacity>
+            <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>{modalTitle}</Text>
+            <TouchableOpacity onPress={saveItem} disabled={saving}>{saving ? <ActivityIndicator size="small" color={Colors.primary} /> : <Text style={styles.modalSave}>Save</Text>}</TouchableOpacity>
+          </View>
+
+          <ScrollView contentContainerStyle={styles.modalBody} keyboardShouldPersistTaps="handled">
+            {(activeTab === 'modules' || activeTab === 'assignments' || activeTab === 'announcements' || activeTab === 'quizzes') && (
+              <Field label="Title" value={form.title} onChangeText={(v) => setForm((p) => ({ ...p, title: v }))} />
+            )}
+
+            {(activeTab === 'assignments' || activeTab === 'quizzes' || activeTab === 'files') && (
+              <View style={styles.fieldWrap}>
+                <Text style={styles.fieldLabel}>Week Topic</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.topicPickerRow}>
+                  <TouchableOpacity
+                    style={[styles.topicChip, !selectedWeeklyModuleId && styles.topicChipActive]}
+                    onPress={() => setSelectedWeeklyModuleId(null)}
+                  >
+                    <Text style={[styles.topicChipText, !selectedWeeklyModuleId && styles.topicChipTextActive]}>Unassigned</Text>
+                  </TouchableOpacity>
+                  {modules.map((m) => (
+                    <TouchableOpacity
+                      key={m.id}
+                      style={[styles.topicChip, selectedWeeklyModuleId === m.id && styles.topicChipActive]}
+                      onPress={() => setSelectedWeeklyModuleId(m.id)}
+                    >
+                      <Text style={[styles.topicChipText, selectedWeeklyModuleId === m.id && styles.topicChipTextActive]}>
+                        Week {m.week_number}: {m.title}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </View>
+            )}
+
+            {activeTab === 'modules' && (
+              <>
+                <ToggleRow label="Exam Week" value={form.is_exam_week} onToggle={() => setForm((p) => ({ ...p, is_exam_week: !p.is_exam_week }))} />
+              </>
+            )}
+
+            {activeTab === 'assignments' && (
+              <>
+                <Field label="Description" value={form.description} multiline onChangeText={(v) => setForm((p) => ({ ...p, description: v }))} />
+                <Field label="Points" value={form.points} keyboardType="numeric" onChangeText={(v) => setForm((p) => ({ ...p, points: v }))} />
+                <View style={styles.fieldWrap}>
+                  <Text style={styles.fieldLabel}>Accepted Submission Types</Text>
+                  <View style={styles.typeRow}>
+                    {['all', 'text', 'image', 'pdf'].map((t) => {
+                      const active = form.allowed_file_types.includes(t);
+                      return (
+                        <TouchableOpacity
+                          key={t}
+                          style={[styles.topicChip, active && styles.topicChipActive]}
+                          onPress={() =>
+                            setForm((prev) => {
+                              if (t === 'all') return { ...prev, allowed_file_types: ['all'] };
+                              const next = prev.allowed_file_types.filter((x) => x !== 'all');
+                              return {
+                                ...prev,
+                                allowed_file_types: next.includes(t) ? next.filter((x) => x !== t) : [...next, t],
+                              };
+                            })
+                          }
+                        >
+                          <Text style={[styles.topicChipText, active && styles.topicChipTextActive]}>{t.toUpperCase()}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </View>
+                <ToggleRow label="Set Deadline" value={hasDeadline} onToggle={() => setHasDeadline((p) => !p)} />
+                {hasDeadline && (
+                  <View style={styles.datePickerWrap}>
+                    <DateTimePicker
+                      value={deadlineDate}
+                      hasTime={deadlineHasTime}
+                      onToggleTime={setDeadlineHasTime}
+                      onChange={setDeadlineDate}
+                    />
+                    <Text style={styles.dateHint}>Due {formatDate(deadlineDate.toISOString())}</Text>
+                  </View>
+                )}
+              </>
+            )}
+
+            {activeTab === 'files' && (
+              <>
+                <Field label="File Name" value={form.file_name} onChangeText={(v) => setForm((p) => ({ ...p, file_name: v }))} />
+                <Field label="File URL" value={form.file_url} onChangeText={(v) => setForm((p) => ({ ...p, file_url: v }))} />
+                <Field label="File Type" value={form.file_type} onChangeText={(v) => setForm((p) => ({ ...p, file_type: v }))} />
+                <Field label="Folder Path" value={form.folder_path} onChangeText={(v) => setForm((p) => ({ ...p, folder_path: v }))} />
+                <Field label="Category" value={form.category} onChangeText={(v) => setForm((p) => ({ ...p, category: v }))} />
+                <View style={styles.fieldWrap}>
+                  <Text style={styles.fieldLabel}>Upload Learning Material</Text>
+                  <TouchableOpacity style={styles.uploadSecondaryBtn} onPress={pickCourseMaterialFile}>
+                    <Text style={styles.uploadSecondaryBtnText}>Choose File (PDF/DOCX/ZIP/PNG/JPG)</Text>
+                  </TouchableOpacity>
+                  {!!selectedCourseMaterialFile && (
+                    <View style={styles.uploadedFileCard}>
+                      <View style={styles.uploadedFileRow}>
+                        <View style={styles.uploadedFileLeft}>
+                          <View style={styles.uploadedFileIconWrap}>
+                            <Ionicons name="cloud-upload-outline" size={18} color="#007ACC" />
+                          </View>
+                          <View style={styles.uploadedFileInfo}>
+                            <Text style={styles.uploadedFileName} numberOfLines={1}>{selectedCourseMaterialFile.name}</Text>
+                            <Text style={styles.uploadedFileSize}>{formatFileSize(selectedCourseMaterialFile.size)}</Text>
+                          </View>
+                        </View>
+                        <TouchableOpacity onPress={() => setSelectedCourseMaterialFile(null)} style={styles.uploadFileRemoveBtn}>
+                          <Ionicons name="close-circle" size={18} color="#DC2626" />
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  )}
+                </View>
+              </>
+            )}
+
+            {activeTab === 'announcements' && (
+              <Field label="Body" value={form.body} multiline onChangeText={(v) => setForm((p) => ({ ...p, body: v }))} />
+            )}
+
+            {activeTab === 'quizzes' && (
+              <>
+                <Field label="Instructions" value={form.instructions} multiline onChangeText={(v) => setForm((p) => ({ ...p, instructions: v }))} />
+                <Field label="Attempt Limit" value={form.attempt_limit} keyboardType="numeric" onChangeText={(v) => setForm((p) => ({ ...p, attempt_limit: v }))} />
+                <Field label="Time Limit Minutes" value={form.time_limit_minutes} keyboardType="numeric" onChangeText={(v) => setForm((p) => ({ ...p, time_limit_minutes: v }))} />
+                <ToggleRow label="Set Open Date" value={hasQuizOpenAt} onToggle={() => setHasQuizOpenAt((p) => !p)} />
+                {hasQuizOpenAt && (
+                  <View style={styles.datePickerWrap}>
+                    <DateTimePicker
+                      value={quizOpenAtDate}
+                      hasTime={quizOpenHasTime}
+                      onToggleTime={setQuizOpenHasTime}
+                      onChange={setQuizOpenAtDate}
+                    />
+                    <Text style={styles.dateHint}>Opens {formatDate(quizOpenAtDate.toISOString())}</Text>
+                  </View>
+                )}
+                <ToggleRow label="Set Close Date" value={hasQuizCloseAt} onToggle={() => setHasQuizCloseAt((p) => !p)} />
+                {hasQuizCloseAt && (
+                  <View style={styles.datePickerWrap}>
+                    <DateTimePicker
+                      value={quizCloseAtDate}
+                      hasTime={quizCloseHasTime}
+                      onToggleTime={setQuizCloseHasTime}
+                      onChange={setQuizCloseAtDate}
+                    />
+                    <Text style={styles.dateHint}>Closes {formatDate(quizCloseAtDate.toISOString())}</Text>
+                  </View>
+                )}
+              </>
+            )}
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      <Modal visible={submissionModalVisible} animationType="slide" onRequestClose={() => setSubmissionModalVisible(false)}>
+        <KeyboardAvoidingView style={[styles.modalWrap, { backgroundColor: colors.background }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <View style={[styles.modalHeader, { borderBottomColor: colors.border, backgroundColor: colors.surface }]}>
+            <TouchableOpacity onPress={() => setSubmissionModalVisible(false)}><Text style={[styles.modalCancel, { color: colors.textSecondary }]}>Cancel</Text></TouchableOpacity>
+            <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Assignment Submission</Text>
+            <View style={{ width: 48 }} />
+          </View>
+          <ScrollView contentContainerStyle={styles.modalBody} keyboardShouldPersistTaps="handled">
+            {!!selectedActivity && (
+              <View style={styles.assignmentHeaderCard}>
+                <View style={styles.assignmentHeaderTopRow}>
+                  <Text style={styles.assignmentTitleText}>{selectedActivity.title}</Text>
+                  <Text style={styles.assignmentStatusBadge}>{submissionStatusLabel(selectedActivity)}</Text>
+                </View>
+                <View style={styles.assignmentMetaRow}>
+                  <Text style={styles.assignmentMetaText}>
+                    Due: {selectedActivity.deadline ? formatDate(selectedActivity.deadline) : 'No due date'}
+                  </Text>
+                  <Text style={styles.assignmentMetaText}>Points: {selectedActivity.points}</Text>
+                </View>
+              </View>
+            )}
+
+            {!!selectedActivity && (
+              <View style={styles.detailCard}>
+                <Text style={styles.detailCardTitle}>Assignment Details</Text>
+                <Text style={styles.detailCardBody}>
+                  {selectedActivity.instructions || selectedActivity.description || 'No instructions.'}
+                </Text>
+              </View>
+            )}
+
+            <View style={styles.assignmentUploadCard}>
+              <Text style={styles.assignmentSectionTitle}>File Upload</Text>
+              <Text style={styles.assignmentHintText}>
+                Accepted: PDF, DOCX, ZIP, PNG, JPG
+              </Text>
+              <TouchableOpacity
+                style={styles.uploadDropZone}
+                onPress={pickSubmissionFile}
+                activeOpacity={0.85}
+                accessibilityRole="button"
+                accessibilityLabel="Upload assignment file"
+              >
+                <Ionicons name="cloud-upload-outline" size={28} color="#007ACC" />
+                <Text style={styles.uploadDropZoneText}>Drag & drop area</Text>
+                <Text style={styles.uploadDropZoneSubText}>Tap to choose files</Text>
+              </TouchableOpacity>
+              <View style={styles.uploadActionsRow}>
+                <TouchableOpacity
+                  style={styles.uploadSecondaryBtn}
+                  onPress={pickSubmissionFile}
+                  accessibilityRole="button"
+                  accessibilityLabel="Choose file"
+                >
+                  <Text style={styles.uploadSecondaryBtnText}>Choose File</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.uploadSecondaryBtn}
+                  onPress={pickImageSubmission}
+                  accessibilityRole="button"
+                  accessibilityLabel="Choose image"
+                >
+                  <Text style={styles.uploadSecondaryBtnText}>Choose Image</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            <View style={styles.assignmentUploadCard}>
+              <Text style={styles.assignmentSectionTitle}>Uploaded Files</Text>
+              {selectedSubmissionFiles.length === 0 ? (
+                <Text style={styles.assignmentHintText}>No files attached yet.</Text>
+              ) : (
+                selectedSubmissionFiles.map((f, idx) => {
+                  const ext = (f.name.split('.').pop() || '').toLowerCase();
+                  const iconName = FILE_ICONS[ext] || 'document-outline';
+                  const imageFile = isImageFile(f.name, f.mimeType);
+                  return (
+                    <View key={`${f.uri}-${idx}`} style={styles.uploadedFileCard}>
+                      <View style={styles.uploadedFileRow}>
+                        <View style={styles.uploadedFileLeft}>
+                          <View style={styles.uploadedFileIconWrap}>
+                            <Ionicons name={iconName as any} size={18} color="#007ACC" />
+                          </View>
+                          <View style={styles.uploadedFileInfo}>
+                            <Text style={styles.uploadedFileName} numberOfLines={1}>{f.name}</Text>
+                            <Text style={styles.uploadedFileSize}>{formatFileSize(f.size)}</Text>
+                          </View>
+                        </View>
+                        <TouchableOpacity
+                          onPress={() => removeSubmissionFile(idx)}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Remove file ${f.name}`}
+                          style={styles.uploadFileRemoveBtn}
+                        >
+                          <Ionicons name="close-circle" size={18} color="#DC2626" />
+                        </TouchableOpacity>
+                      </View>
+
+                      {imageFile ? (
+                        <TouchableOpacity onPress={() => setPreviewImageUri(f.uri)} activeOpacity={0.9} style={styles.fullPreviewWrap}>
+                          <Image
+                            source={{ uri: f.uri }}
+                            style={[styles.uploadedImagePreview, { aspectRatio: imageAspectByUri[f.uri] || 4 / 3 }]}
+                            contentFit="contain"
+                            transition={120}
+                          />
+                        </TouchableOpacity>
+                      ) : (
+                        <TouchableOpacity
+                          onPress={() => Linking.openURL(f.uri)}
+                          style={styles.fullPreviewWrap}
+                          activeOpacity={0.85}
+                        >
+                          <View style={styles.uploadedDocPreview}>
+                            <Ionicons name={iconName as any} size={34} color="#007ACC" />
+                            <Text style={styles.uploadedDocPreviewTitle}>{ext.toUpperCase() || 'FILE'} Preview</Text>
+                            <Text style={styles.uploadedDocPreviewHint}>Tap to open full document</Text>
+                          </View>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  );
+                })
+              )}
+            </View>
+
+            <Field label="Response / Notes" value={submissionText} multiline onChangeText={setSubmissionText} />
+
+            {!!submissionInlineError && (
+              <View style={styles.inlineErrorBox}>
+                <Text style={styles.inlineErrorText}>{submissionInlineError}</Text>
+              </View>
+            )}
+            {!!submissionSuccessAt && (
+              <View style={styles.inlineSuccessBox}>
+                <Text style={styles.inlineSuccessText}>Submitted successfully at {formatDate(submissionSuccessAt)}</Text>
+              </View>
+            )}
+
+            {showSubmissionReview && (
+              <View style={styles.assignmentReviewCard}>
+                <Text style={styles.assignmentSectionTitle}>Submission Review</Text>
+                <Text style={styles.assignmentHintText}>Files: {selectedSubmissionFiles.length}</Text>
+                <Text style={styles.assignmentHintText}>
+                  Notes: {submissionText.trim() ? submissionText.trim() : 'No notes provided.'}
+                </Text>
+              </View>
+            )}
+
+            <View style={styles.assignmentActionButtonsRow}>
+              <TouchableOpacity
+                style={styles.assignmentReviewBtn}
+                onPress={() => setShowSubmissionReview((p) => !p)}
+                accessibilityRole="button"
+                accessibilityLabel="Review submission"
+              >
+                <Text style={styles.assignmentReviewBtnText}>{showSubmissionReview ? 'Hide Review' : 'Review'}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.assignmentSubmitBtn, (submittingActivity || selectedSubmissionFiles.length === 0) && styles.assignmentSubmitBtnDisabled]}
+                onPress={submitActivity}
+                disabled={submittingActivity || selectedSubmissionFiles.length === 0}
+                accessibilityRole="button"
+                accessibilityLabel="Submit assignment"
+              >
+                {submittingActivity
+                  ? <ActivityIndicator size="small" color="#FFFFFF" />
+                  : <Text style={styles.assignmentSubmitBtnText}>Submit</Text>}
+              </TouchableOpacity>
+            </View>
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      <Modal visible={!!previewImageUri} transparent animationType="fade" onRequestClose={() => setPreviewImageUri(null)}>
+        <View style={styles.previewBackdrop}>
+          <TouchableOpacity style={styles.previewCloseBtn} onPress={() => setPreviewImageUri(null)}>
+            <Ionicons name="close" size={22} color="#FFFFFF" />
+          </TouchableOpacity>
+          {!!previewImageUri && (
+            <Image
+              source={{ uri: previewImageUri }}
+              style={styles.previewImage}
+              contentFit="contain"
+              transition={160}
+            />
+          )}
+        </View>
+      </Modal>
+
+      <Modal visible={activityDetailVisible} animationType="slide" onRequestClose={() => setActivityDetailVisible(false)}>
+        <View style={[styles.modalWrap, { backgroundColor: colors.background }]}>
+          <View style={[styles.modalHeader, { borderBottomColor: colors.border, backgroundColor: colors.surface }]}>
+            <TouchableOpacity onPress={() => setActivityDetailVisible(false)}><Text style={[styles.modalCancel, { color: colors.textSecondary }]}>Close</Text></TouchableOpacity>
+            <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Activity Details</Text>
+            <View style={{ width: 48 }} />
+          </View>
+          <ScrollView contentContainerStyle={styles.modalBody}>
+            {!!selectedActivity && (
+              <>
+                <LinearGradient colors={['#0B3A8A', '#1F5FBF']} style={styles.detailHeroCard}>
+                  <Text style={styles.detailHeroTitle}>{selectedActivity.title}</Text>
+                  <View style={styles.detailHeroMetaRow}>
+                    <Text style={styles.detailHeroMetaBadge}>{submissionStatusLabel(selectedActivity)}</Text>
+                    <Text style={styles.detailHeroMetaBadge}>{acceptedTypesLabel(selectedActivity)}</Text>
+                  </View>
+                  <View style={styles.detailHeroMetaRow}>
+                    <Text style={styles.detailHeroMetaText}>Points: {selectedActivity.points}</Text>
+                    <Text style={styles.detailHeroMetaText}>
+                      Due: {selectedActivity.deadline ? formatDate(selectedActivity.deadline) : 'No due date'}
+                    </Text>
+                  </View>
+                </LinearGradient>
+
+                <View style={styles.detailCard}>
+                  <Text style={styles.detailCardTitle}>Instructions</Text>
+                  <Text style={styles.detailCardBody}>{selectedActivity.instructions || selectedActivity.description || 'No instructions.'}</Text>
+                </View>
+
+                {selectedActivity.my_submission?.score != null && (
+                  <View style={styles.detailCard}>
+                    <Text style={styles.detailCardTitle}>Performance</Text>
+                    <View style={styles.quizInfoScoreCard}>
+                    <ScoreRing score={selectedActivity.my_submission.score} maxScore={selectedActivity.points} size={110} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.previewLabel}>Class range</Text>
+                      <Text style={styles.previewValue}>Lowest: {selectedActivity.class_stats?.lowest_score ?? '-'}</Text>
+                      <Text style={styles.previewValue}>Highest: {selectedActivity.class_stats?.highest_score ?? '-'}</Text>
+                    </View>
+                  </View>
+                  </View>
+                )}
+                {!canManage && (
+                  <TouchableOpacity style={styles.primaryActionBtn} onPress={() => { setActivityDetailVisible(false); openSubmissionModal(selectedActivity); }}>
+                    <Text style={styles.primaryActionBtnText}>{selectedActivity.my_submission ? 'Update Submission' : 'Submit Activity'}</Text>
+                  </TouchableOpacity>
+                )}
+              </>
+            )}
+          </ScrollView>
+        </View>
+      </Modal>
+
+      <Modal visible={attendanceHistoryModalVisible} animationType="slide" onRequestClose={() => setAttendanceHistoryModalVisible(false)}>
+        <View style={[styles.modalWrap, { backgroundColor: colors.background }]}>
+          <View style={[styles.modalHeader, { borderBottomColor: colors.border, backgroundColor: colors.surface }]}>
+            <TouchableOpacity onPress={() => setAttendanceHistoryModalVisible(false)}><Text style={[styles.modalCancel, { color: colors.textSecondary }]}>Close</Text></TouchableOpacity>
+            <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Attendance History</Text>
+            <View style={{ width: 48 }} />
+          </View>
+          <ScrollView contentContainerStyle={styles.modalBody}>
+            {studentAttendanceHistory.length === 0 ? (
+              <Text style={styles.moduleEmptyText}>No attendance records yet.</Text>
+            ) : (
+              studentAttendanceHistory.map((row: any) => (
+                <View key={row.meeting_id} style={styles.attHistoryRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.attHistoryTitle}>{row.title}</Text>
+                    <Text style={styles.attHistoryMeta}>{formatDate(row.date)}</Text>
+                  </View>
+                  <View style={[styles.attHistoryBadge, { backgroundColor: attendanceStatusBg(row.status as AttendanceStatus) }]}>
+                    <Text style={[styles.attHistoryBadgeText, { color: attendanceStatusColor(row.status as AttendanceStatus) }]}>{row.status}</Text>
+                  </View>
+                </View>
+              ))
+            )}
+          </ScrollView>
+        </View>
+      </Modal>
+
+      <Modal visible={quizModalVisible} animationType="slide" onRequestClose={handleQuizCancel}>
+        <KeyboardAvoidingView style={[styles.modalWrap, { backgroundColor: colors.background }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <View style={[styles.modalHeader, { borderBottomColor: colors.border, backgroundColor: colors.surface }]}>
+            <TouchableOpacity onPress={handleQuizCancel}><Text style={[styles.modalCancel, { color: colors.textSecondary }]}>Cancel</Text></TouchableOpacity>
+            <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Take Quiz</Text>
+            <TouchableOpacity onPress={submitQuiz} disabled={quizSubmitting}>{quizSubmitting ? <ActivityIndicator size="small" color={Colors.primary} /> : <Text style={styles.modalSave}>Submit</Text>}</TouchableOpacity>
+          </View>
+          <ScrollView contentContainerStyle={styles.modalBody}>
+            {quizTimeRemaining != null && (
+              <View style={styles.quizTimerBanner}>
+                <Ionicons name="timer-outline" size={16} color="#B45309" />
+                <Text style={styles.quizTimerText}>Time remaining: {formatDuration(quizTimeRemaining)}</Text>
+              </View>
+            )}
+            {quizQuestions.map((q, idx) => (
+              <View key={q.id} style={styles.quizQuestionCard}>
+                <Text style={styles.quizQuestionTitle}>{idx + 1}. {q.question_text}</Text>
+                {(q.question_type === 'multiple_choice' || q.question_type === 'true_false') ? (
+                  <View style={{ gap: 8 }}>
+                    {(q.choices || []).map((c: any) => (
+                      <TouchableOpacity
+                        key={c.id}
+                        style={[styles.choiceRow, quizAnswers[q.id]?.selected_choice_id === c.id && styles.choiceRowActive]}
+                        onPress={() => setQuizAnswers((prev) => ({ ...prev, [q.id]: { ...prev[q.id], selected_choice_id: c.id } }))}
+                      >
+                        <Text style={styles.choiceText}>{c.choice_text}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                ) : (
+                  <Field
+                    label="Answer"
+                    value={quizAnswers[q.id]?.text_answer || ''}
+                    multiline
+                    onChangeText={(v) => setQuizAnswers((prev) => ({ ...prev, [q.id]: { ...prev[q.id], text_answer: v } }))}
+                  />
+                )}
+              </View>
+            ))}
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      <Modal visible={quizResultModalVisible} animationType="slide" onRequestClose={() => setQuizResultModalVisible(false)}>
+        <View style={[styles.modalWrap, { backgroundColor: colors.background }]}>
+          <View style={[styles.modalHeader, { borderBottomColor: colors.border, backgroundColor: colors.surface }]}>
+            <TouchableOpacity onPress={() => setQuizResultModalVisible(false)}><Text style={[styles.modalCancel, { color: colors.textSecondary }]}>Close</Text></TouchableOpacity>
+            <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Quiz Result</Text>
+            <View style={{ width: 48 }} />
+          </View>
+          <View style={styles.modalBody}>
+            <View style={styles.detailCard}>
+              <Text style={styles.detailCardTitle}>Your Result</Text>
+              <View style={styles.resultRingWrap}>
+                <ScoreRing score={quizResult?.score} maxScore={quizResult?.max_score} size={140} />
+              </View>
+              <View style={styles.distCard}>
+                <Text style={styles.detailCardTitle}>Class Score Distribution</Text>
+                <ScoreDistributionLine
+                  score={quizResult?.score}
+                  maxScore={quizResult?.max_score}
+                  lowest={quizResult?.class_stats?.lowest_score}
+                  mean={quizResult?.class_stats?.average_score}
+                  highest={quizResult?.class_stats?.highest_score}
+                />
+              </View>
+              <View style={styles.distCard}>
+                <Text style={styles.detailCardTitle}>Your Attempts</Text>
+                {(quizResult?.attempts || []).length === 0 ? (
+                  <Text style={styles.previewValue}>No attempts yet.</Text>
+                ) : (
+                  (quizResult?.attempts || []).map((a: any) => (
+                    <View key={`attempt-${a.attempt_number}`} style={styles.attemptRow}>
+                      <Text style={styles.attemptLabel}>Attempt {a.attempt_number}</Text>
+                      <Text style={styles.attemptValue}>
+                        {a.pending_manual_grading
+                          ? 'Pending grading'
+                          : `${a.score ?? '-'} / ${a.max_score ?? '-'}`}
+                      </Text>
+                      <Text style={styles.attemptTime}>{formatDuration(a.duration_seconds)}</Text>
+                    </View>
+                  ))
+                )}
+              </View>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={quizInfoModalVisible} animationType="slide" onRequestClose={() => setQuizInfoModalVisible(false)}>
+        <View style={[styles.modalWrap, { backgroundColor: colors.background }]}>
+          <View style={[styles.modalHeader, { borderBottomColor: colors.border, backgroundColor: colors.surface }]}>
+            <TouchableOpacity onPress={() => setQuizInfoModalVisible(false)}><Text style={[styles.modalCancel, { color: colors.textSecondary }]}>Close</Text></TouchableOpacity>
+            <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Quiz Details</Text>
+            <View style={{ width: 48 }} />
+          </View>
+          <ScrollView contentContainerStyle={styles.modalBody}>
+            {!!selectedQuizForInfo && (
+              <>
+                {(() => {
+                  const action = getQuizAction(selectedQuizForInfo);
+                  const actionStyle = QUIZ_ACTION_STYLES[action.variant];
+                  return (
+                    <LinearGradient colors={actionStyle.gradient} style={styles.detailHeroCard}>
+                      <Text style={styles.detailHeroTitle}>{selectedQuizForInfo.title}</Text>
+                      <View style={styles.detailHeroMetaRow}>
+                        <Text style={[styles.detailHeroMetaBadge, { backgroundColor: actionStyle.badgeBackground, color: actionStyle.badgeText }]}>
+                          {action.label}
+                        </Text>
+                        <Text style={[styles.detailHeroMetaBadge, { backgroundColor: actionStyle.badgeBackground, color: actionStyle.badgeText }]}>
+                          Attempts: {selectedQuizForInfo.my_attempt?.attempts_used ?? 0}/{selectedQuizForInfo.my_attempt?.attempt_limit ?? selectedQuizForInfo.attempt_limit}
+                        </Text>
+                        <Text style={[styles.detailHeroMetaBadge, { backgroundColor: actionStyle.badgeBackground, color: actionStyle.badgeText }]}>
+                          Time: {selectedQuizForInfo.time_limit_minutes ? `${selectedQuizForInfo.time_limit_minutes}m` : 'No limit'}
+                        </Text>
+                      </View>
+                      <View style={styles.detailHeroMetaRow}>
+                        <Text style={styles.detailHeroMetaText}>Opens: {selectedQuizForInfo.open_at ? formatDate(selectedQuizForInfo.open_at) : 'Immediately'}</Text>
+                        <Text style={styles.detailHeroMetaText}>Closes: {selectedQuizForInfo.close_at ? formatDate(selectedQuizForInfo.close_at) : 'No close date'}</Text>
+                      </View>
+                    </LinearGradient>
+                  );
+                })()}
+
+                <View style={styles.detailCard}>
+                  <Text style={styles.detailCardTitle}>Instructions</Text>
+                  <Text style={styles.detailCardBody}>{selectedQuizForInfo.instructions || 'No instructions.'}</Text>
+                </View>
+                {!!selectedQuizForInfo.my_attempt?.score && (
+                  <View style={styles.detailCard}>
+                    <Text style={styles.detailCardTitle}>Latest Score</Text>
+                    <View style={styles.quizInfoScoreCard}>
+                      <ScoreRing score={selectedQuizForInfo.my_attempt?.score} maxScore={selectedQuizForInfo.my_attempt?.max_score || 0} size={120} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.previewLabel}>Class range</Text>
+                        <Text style={styles.previewValue}>Lowest: {quizInfoStats?.class_stats?.lowest_score ?? '-'}</Text>
+                        <Text style={styles.previewValue}>Highest: {quizInfoStats?.class_stats?.highest_score ?? '-'}</Text>
+                      </View>
+                    </View>
+                  </View>
+                )}
+                {(() => {
+                  const action = getQuizAction(selectedQuizForInfo);
+                  const actionStyle = QUIZ_ACTION_STYLES[action.variant];
+                  return (
+                    <TouchableOpacity
+                      style={[
+                        styles.primaryActionBtn,
+                        { backgroundColor: actionStyle.backgroundColor, borderColor: actionStyle.borderColor },
+                        action.disabled && { opacity: 0.55 },
+                      ]}
+                      disabled={action.disabled}
+                      onPress={action.onPress}
+                    >
+                      <Text style={[styles.primaryActionBtnText, { color: actionStyle.textColor }]}>{action.label}</Text>
+                    </TouchableOpacity>
+                  );
+                })()}
+              </>
+            )}
+          </ScrollView>
+        </View>
+      </Modal>
+
+      <Modal visible={gradeModalVisible} animationType="slide" onRequestClose={() => setGradeModalVisible(false)}>
+        <View style={[styles.modalWrap, { backgroundColor: colors.background }]}>
+          <View style={[styles.modalHeader, { borderBottomColor: colors.border, backgroundColor: colors.surface }]}>
+            <TouchableOpacity onPress={() => setGradeModalVisible(false)}><Text style={[styles.modalCancel, { color: colors.textSecondary }]}>Close</Text></TouchableOpacity>
+            <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Grade Activities</Text>
+            <View style={{ width: 48 }} />
+          </View>
+          <ScrollView contentContainerStyle={styles.modalBody}>
+            {gradingLoading ? <ActivityIndicator color={Colors.primary} /> : gradingItems.map((s, i) => {
+              const rowKey = s._rowKey || s.id || s.student_id || `row-${i}`;
+              const expanded = expandedGradeItemKey === rowKey;
+              return (
+                <View key={rowKey} style={styles.gradeCard}>
+                  <TouchableOpacity
+                    style={styles.gradeAccordionHeader}
+                    onPress={() => setExpandedGradeItemKey((prev) => (prev === rowKey ? null : rowKey))}
+                    activeOpacity={0.85}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.gradeStudent}>{s.student_name || `Student ${i + 1}`}</Text>
+                      <Text style={styles.gradeAccordionMeta}>
+                        Status: {s.status || 'not_submitted'} {s.score != null ? `• Score: ${s.score}` : ''}
+                      </Text>
+                    </View>
+                    <Ionicons
+                      name={expanded ? 'chevron-up' : 'chevron-down'}
+                      size={18}
+                      color="#334155"
+                    />
+                  </TouchableOpacity>
+
+                  {expanded && (
+                    <View style={styles.gradeAccordionBody}>
+                      {!!s.text_content && <Text style={styles.previewValue}>Text: {s.text_content}</Text>}
+                      {!!(s.file_urls || []).length && (
+                        <View style={{ marginBottom: 8 }}>
+                          <Text style={styles.previewLabel}>Files:</Text>
+                          {(s.file_urls || []).map((url: string, idx: number) => {
+                            const resolvedUrl = resolveBackendFileUrl(url);
+                            const fileName = fileNameFromUrl(resolvedUrl);
+                            const ext = (fileName.split('.').pop() || '').toLowerCase();
+                            const iconName = FILE_ICONS[ext] || 'document-outline';
+                            const imageFile = isImageFile(fileName);
+                            return (
+                              <View key={`${rowKey}-file-${idx}`} style={styles.teacherPreviewCard}>
+                                {imageFile ? (
+                                  <TouchableOpacity style={styles.fullPreviewWrap} onPress={() => setPreviewImageUri(resolvedUrl)} activeOpacity={0.9}>
+                                    <Image
+                                      source={{ uri: resolvedUrl }}
+                                      style={styles.teacherPreviewImage}
+                                      contentFit="contain"
+                                      transition={120}
+                                    />
+                                  </TouchableOpacity>
+                                ) : (
+                                  <TouchableOpacity style={styles.fullPreviewWrap} onPress={() => Linking.openURL(resolvedUrl)} activeOpacity={0.85}>
+                                    <View style={styles.uploadedDocPreview}>
+                                      <Ionicons name={iconName as any} size={34} color="#007ACC" />
+                                      <Text style={styles.uploadedDocPreviewTitle}>{ext.toUpperCase() || 'FILE'} Preview</Text>
+                                      <Text style={styles.uploadedDocPreviewHint}>Tap to open full document</Text>
+                                    </View>
+                                  </TouchableOpacity>
+                                )}
+                                <TouchableOpacity onPress={() => Linking.openURL(resolvedUrl)}>
+                                  <Text style={styles.fileLink} numberOfLines={1}>{fileName}</Text>
+                                </TouchableOpacity>
+                              </View>
+                            );
+                          })}
+                        </View>
+                      )}
+                      <Field
+                        label="Score"
+                        value={String(s._score ?? '')}
+                        keyboardType="numeric"
+                        onChangeText={(v) => setGradingItems((prev) => prev.map((x) => x._rowKey === rowKey ? { ...x, _score: v } : x))}
+                      />
+                      <Field
+                        label="Feedback"
+                        value={s._feedback || ''}
+                        multiline
+                        onChangeText={(v) => setGradingItems((prev) => prev.map((x) => x._rowKey === rowKey ? { ...x, _feedback: v } : x))}
+                      />
+                      {s.id ? (
+                        <TouchableOpacity style={styles.inlineBtn} onPress={() => saveSubmissionGrade(s)}>
+                          <Text style={styles.inlineBtnText}>Save Grade</Text>
+                        </TouchableOpacity>
+                      ) : (
+                        <Text style={styles.pendingPill}>No submission yet</Text>
+                      )}
+                    </View>
+                  )}
+                </View>
+              );
+            })}
+          </ScrollView>
+        </View>
+      </Modal>
+
+      <Modal visible={quizGradingModalVisible} animationType="slide" onRequestClose={() => setQuizGradingModalVisible(false)}>
+        <View style={[styles.modalWrap, { backgroundColor: colors.background }]}>
+          <View style={[styles.modalHeader, { borderBottomColor: colors.border, backgroundColor: colors.surface }]}>
+            <TouchableOpacity onPress={() => setQuizGradingModalVisible(false)}><Text style={[styles.modalCancel, { color: colors.textSecondary }]}>Close</Text></TouchableOpacity>
+            <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Grade Quiz Answers</Text>
+            <View style={{ width: 48 }} />
+          </View>
+          <ScrollView contentContainerStyle={styles.modalBody}>
+            {quizGradingLoading ? <ActivityIndicator color={Colors.primary} /> : quizGradingItems.map((attempt, idx) => {
+              const rowKey = attempt._rowKey || attempt.attempt_id || `attempt-${idx}`;
+              const expanded = expandedQuizAttemptKey === rowKey;
+              return (
+                <View key={rowKey} style={styles.gradeCard}>
+                  <TouchableOpacity
+                    style={styles.gradeAccordionHeader}
+                    onPress={() => setExpandedQuizAttemptKey((prev) => (prev === rowKey ? null : rowKey))}
+                    activeOpacity={0.85}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.gradeStudent}>{attempt.student_name}</Text>
+                      <Text style={styles.gradeAccordionMeta}>
+                        Attempt {attempt.attempt_number || '-'} • Score: {attempt.score ?? '-'} / {attempt.max_score ?? '-'}
+                      </Text>
+                    </View>
+                    <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={18} color="#334155" />
+                  </TouchableOpacity>
+
+                  {expanded && (
+                    <View style={styles.gradeAccordionBody}>
+                      {(attempt.answers || []).map((ans: any) => {
+                        const hasNumericScore = typeof ans.points_awarded === 'number' && typeof ans.points === 'number';
+                        const isCorrect = ans.is_correct === true || (hasNumericScore && ans.points > 0 && ans.points_awarded >= ans.points);
+                        const isIncorrect = ans.is_correct === false || (hasNumericScore && ans.points_awarded <= 0);
+                        return (
+                          <View
+                            key={ans.answer_id}
+                            style={[
+                              styles.answerRow,
+                              isCorrect && styles.answerRowCorrect,
+                              isIncorrect && styles.answerRowIncorrect,
+                            ]}
+                          >
+                            <Text style={styles.answerQ}>{ans.question_text}</Text>
+                            <Text style={styles.answerA}>Answer: {ans.text_answer || ans.selected_choice_text || '-'}</Text>
+                            {ans.needs_manual_grading && (
+                              <>
+                                <Field
+                                  label={`Points (max ${ans.points})`}
+                                  value={ans._points || ''}
+                                  keyboardType="numeric"
+                                  onChangeText={(v) =>
+                                    setQuizGradingItems((prev) =>
+                                      prev.map((att: any) =>
+                                        att._rowKey !== rowKey
+                                          ? att
+                                          : {
+                                              ...att,
+                                              answers: att.answers.map((a: any) =>
+                                                a.answer_id === ans.answer_id ? { ...a, _points: v } : a,
+                                              ),
+                                            },
+                                      ),
+                                    )
+                                  }
+                                />
+                                <TouchableOpacity
+                                  style={styles.inlineBtn}
+                                  onPress={() => gradeQuizAnswer(ans.answer_id, ans._points || '0', undefined)}
+                                >
+                                  <Text style={styles.inlineBtnText}>Save Manual Grade</Text>
+                                </TouchableOpacity>
+                              </>
+                            )}
+                            {!ans.needs_manual_grading && <Text style={styles.pendingPill}>Scored: {ans.points_awarded ?? 0}</Text>}
+                          </View>
+                        );
+                      })}
+                    </View>
+                  )}
+                </View>
+              );
+            })}
+          </ScrollView>
+        </View>
+      </Modal>
+
+      <Modal visible={quickQuizBuilderVisible} animationType="slide" onRequestClose={() => setQuickQuizBuilderVisible(false)}>
+        <KeyboardAvoidingView style={[styles.modalWrap, { backgroundColor: colors.background }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <View style={[styles.modalHeader, { borderBottomColor: colors.border, backgroundColor: colors.surface }]}>
+            <TouchableOpacity onPress={() => setQuickQuizBuilderVisible(false)}><Text style={[styles.modalCancel, { color: colors.textSecondary }]}>Cancel</Text></TouchableOpacity>
+            <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Quick Quiz Builder</Text>
+            <TouchableOpacity onPress={createQuickQuiz} disabled={creatingQuickQuiz}>{creatingQuickQuiz ? <ActivityIndicator size="small" color={Colors.primary} /> : <Text style={styles.modalSave}>Create</Text>}</TouchableOpacity>
+          </View>
+          <ScrollView contentContainerStyle={styles.modalBody}>
+            <Field label="Quiz Title" value={quickQuizTitle} onChangeText={setQuickQuizTitle} />
+            <Field label="Instructions" value={quickQuizInstructions} multiline onChangeText={setQuickQuizInstructions} />
+            <View style={styles.fieldWrap}>
+              <Text style={styles.fieldLabel}>Week Topic</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.topicPickerRow}>
+                <TouchableOpacity
+                  style={[styles.topicChip, !quickQuizWeeklyModuleId && styles.topicChipActive]}
+                  onPress={() => setQuickQuizWeeklyModuleId(null)}
+                >
+                  <Text style={[styles.topicChipText, !quickQuizWeeklyModuleId && styles.topicChipTextActive]}>Unassigned</Text>
+                </TouchableOpacity>
+                {modules.map((m) => (
+                  <TouchableOpacity
+                    key={`quick-week-${m.id}`}
+                    style={[styles.topicChip, quickQuizWeeklyModuleId === m.id && styles.topicChipActive]}
+                    onPress={() => setQuickQuizWeeklyModuleId(m.id)}
+                  >
+                    <Text style={[styles.topicChipText, quickQuizWeeklyModuleId === m.id && styles.topicChipTextActive]}>
+                      Week {m.week_number}: {m.title}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+            <Field label="Attempt Limit" value={quickQuizAttemptLimit} keyboardType="numeric" onChangeText={setQuickQuizAttemptLimit} />
+            <View style={styles.fieldWrap}>
+              <Text style={styles.fieldLabel}>Time Limit (minutes)</Text>
+              <View style={styles.typeRow}>
+                {[10, 15, 20, 30, 45, 60, 90].map((min) => {
+                  const active = quickQuizTimeLimit === String(min);
+                  return (
+                    <TouchableOpacity
+                      key={`min-${min}`}
+                      style={[styles.topicChip, active && styles.topicChipActive]}
+                      onPress={() => setQuickQuizTimeLimit(String(min))}
+                    >
+                      <Text style={[styles.topicChipText, active && styles.topicChipTextActive]}>{min}m</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+            <ToggleRow label="Set Open Date" value={quickQuizHasOpenAt} onToggle={() => setQuickQuizHasOpenAt((p) => !p)} />
+            {quickQuizHasOpenAt && (
+              <View style={styles.datePickerWrap}>
+                <DateTimePicker
+                  value={quickQuizOpenAt}
+                  hasTime={quickQuizOpenHasTime}
+                  onToggleTime={setQuickQuizOpenHasTime}
+                  onChange={setQuickQuizOpenAt}
+                />
+              </View>
+            )}
+            <ToggleRow label="Set Close Date" value={quickQuizHasCloseAt} onToggle={() => setQuickQuizHasCloseAt((p) => !p)} />
+            {quickQuizHasCloseAt && (
+              <View style={styles.datePickerWrap}>
+                <DateTimePicker
+                  value={quickQuizCloseAt}
+                  hasTime={quickQuizCloseHasTime}
+                  onToggleTime={setQuickQuizCloseHasTime}
+                  onChange={setQuickQuizCloseAt}
+                />
+              </View>
+            )}
+            {quickQuizQuestions.map((q, idx) => (
+              <View key={`quick-q-${idx}`} style={styles.gradeCard}>
+                <Text style={styles.gradeStudent}>Question {idx + 1}</Text>
+                <Field
+                  label="Question Text"
+                  value={q.question_text}
+                  onChangeText={(v) =>
+                    setQuickQuizQuestions((prev) => prev.map((item, i) => (i === idx ? { ...item, question_text: v } : item)))
+                  }
+                />
+                <Field
+                  label="Type (multiple_choice | true_false | essay)"
+                  value={q.question_type}
+                  onChangeText={(v) =>
+                    setQuickQuizQuestions((prev) => prev.map((item, i) => (i === idx ? { ...item, question_type: v } : item)))
+                  }
+                />
+                <Field
+                  label="Points"
+                  value={String(q.points)}
+                  keyboardType="numeric"
+                  onChangeText={(v) =>
+                    setQuickQuizQuestions((prev) => prev.map((item, i) => (i === idx ? { ...item, points: Number(v || 1) } : item)))
+                  }
+                />
+                {q.question_type !== 'essay' && (
+                  <View style={{ gap: 8 }}>
+                    {q.choices.map((c: any, cIdx: number) => (
+                      <View key={`q-${idx}-c-${cIdx}`} style={styles.choiceEditRow}>
+                        <TextInput
+                          style={[styles.fieldInput, { flex: 1 }]}
+                          value={c.choice_text}
+                          onChangeText={(v) =>
+                            setQuickQuizQuestions((prev) =>
+                              prev.map((item, i) =>
+                                i !== idx
+                                  ? item
+                                  : {
+                                      ...item,
+                                      choices: item.choices.map((cc: any, j: number) =>
+                                        j === cIdx ? { ...cc, choice_text: v } : cc,
+                                      ),
+                                    },
+                              ),
+                            )
+                          }
+                          placeholder={`Choice ${cIdx + 1}`}
+                          placeholderTextColor="#9CA3AF"
+                        />
+                        <TouchableOpacity
+                          style={[styles.inlineBtn, c.is_correct && { backgroundColor: '#2E7D32' }]}
+                          onPress={() =>
+                            setQuickQuizQuestions((prev) =>
+                              prev.map((item, i) =>
+                                i !== idx
+                                  ? item
+                                  : {
+                                      ...item,
+                                      choices: item.choices.map((cc: any, j: number) => ({ ...cc, is_correct: j === cIdx })),
+                                    },
+                              ),
+                            )
+                          }
+                        >
+                          <Text style={styles.inlineBtnText}>{c.is_correct ? 'Correct' : 'Set Correct'}</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ))}
+                  </View>
+                )}
+              </View>
+            ))}
+            <TouchableOpacity style={[styles.inlineBtn, { marginTop: 6 }]} onPress={addQuickQuestion}>
+              <Text style={styles.inlineBtnText}>Add Question</Text>
+            </TouchableOpacity>
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      <DocumentViewerModal
+        visible={docViewerVisible}
+        onClose={() => setDocViewerVisible(false)}
+        rawUrl={docViewerUrl}
+        previewUrl={docViewerPreviewUrl}
+        fileName={docViewerTitle}
+        breadcrumb={`${title || 'Course'} / Module / ${docViewerTitle || 'File'}`}
+        canAnnotate={canManage}
+        onOpenOutside={(url) => Linking.openURL(url)}
+      />
+    </View>
+  );
+}
+
+function Field({
+  label,
+  value,
+  onChangeText,
+  multiline,
+  keyboardType,
+  placeholder,
+}: {
+  label: string;
+  value: string;
+  onChangeText: (v: string) => void;
+  multiline?: boolean;
+  keyboardType?: 'default' | 'numeric' | 'email-address';
+  placeholder?: string;
+}) {
+  return (
+    <View style={styles.fieldWrap}>
+      <Text style={styles.fieldLabel}>{label}</Text>
+      <TextInput
+        style={[styles.fieldInput, multiline && styles.fieldInputMulti]}
+        value={value}
+        onChangeText={onChangeText}
+        multiline={multiline}
+        keyboardType={keyboardType || 'default'}
+        placeholder={placeholder}
+        placeholderTextColor="#9CA3AF"
+      />
+    </View>
+  );
+}
+
+function ToggleRow({ label, value, onToggle }: { label: string; value: boolean; onToggle: () => void }) {
+  return (
+    <TouchableOpacity style={styles.toggleRow} onPress={onToggle}>
+      <Text style={styles.fieldLabel}>{label}</Text>
+      <Text style={styles.toggleText}>{value ? 'Yes' : 'No'}</Text>
+    </TouchableOpacity>
+  );
+}
+
+function EmptyState({ icon, title }: { icon: string; title: string }) {
+  return (
+    <View style={styles.emptyState}>
+      <Text style={styles.emptyIcon}>{icon}</Text>
+      <Text style={styles.emptyTitle}>{title}</Text>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1 },
+  centered: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 60 },
+  banner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingTop: 56,
+    paddingBottom: Spacing.xl,
+    paddingHorizontal: Spacing.lg,
+    gap: Spacing.sm,
+  },
+  backBtn: { padding: 4 },
+  bannerContent: { flex: 1 },
+  bannerTitle: { color: '#FFFFFF', fontSize: 18, fontWeight: '700', lineHeight: 24 },
+  addBtn: { padding: 4 },
+  tabScroll: { borderBottomWidth: 1, flexGrow: 0 },
+  tab: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.md,
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+  },
+  tabActive: { borderBottomColor: Colors.primary },
+  tabText: { fontSize: 13, fontWeight: '600' },
+  tabContent: { flex: 1 },
+  tabContentInner: { padding: Spacing.xl, width: '100%', maxWidth: 1000, alignSelf: 'center' },
+  modulesToolbar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: Spacing.sm },
+  modulesAddBtn: {
+    borderWidth: 1,
+    borderColor: '#C7D2FE',
+    borderRadius: Radius.md,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#FFFFFF',
+  },
+  modulesAddBtnText: { color: Colors.primary, fontSize: 12, fontWeight: '700' },
+  attendanceSummaryCard: {
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+    borderRadius: Radius.md,
+    backgroundColor: '#FFFFFF',
+    padding: Spacing.md,
+    marginBottom: Spacing.sm,
+  },
+  attSummaryTitle: { fontSize: 15, fontWeight: '700', color: '#2D2D2D', marginBottom: 8 },
+  attProgressTrack: { height: 8, borderRadius: 8, backgroundColor: '#E5E7EB', overflow: 'hidden', marginBottom: 6 },
+  attProgressFill: { height: '100%', backgroundColor: '#007ACC' },
+  attSummaryPct: { fontSize: 12, color: '#4B5563', marginBottom: 8, fontWeight: '600' },
+  attSummaryStats: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 8 },
+  attSummaryStat: { fontSize: 12, color: '#374151' },
+  attTeacherCreateCard: {
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+    borderRadius: Radius.md,
+    backgroundColor: '#FFFFFF',
+    padding: Spacing.md,
+    marginBottom: Spacing.sm,
+  },
+  attTable: {
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: Radius.md,
+    backgroundColor: '#FFFFFF',
+    overflow: 'hidden',
+    marginBottom: Spacing.sm,
+  },
+  attHeaderRow: { flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: '#E5E7EB', backgroundColor: '#F8FAFC' },
+  attDataRow: { flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: '#F1F5F9', minHeight: 46, alignItems: 'center' },
+  attCellHeader: { fontSize: 12, fontWeight: '700', color: '#334155', padding: 8 },
+  attSessionHeaderCell: { width: 110, borderLeftWidth: 1, borderLeftColor: '#E5E7EB', paddingVertical: 6, paddingHorizontal: 6, alignItems: 'center', gap: 2 },
+  attSessionDate: { fontSize: 10, color: '#64748B' },
+  attStudentCol: { width: 170 },
+  attPctCol: { width: 56, textAlign: 'center' },
+  attStudentName: { fontSize: 12, color: '#1F2937', paddingHorizontal: 8 },
+  attStatusCell: {
+    width: 110,
+    marginHorizontal: 0,
+    borderLeftWidth: 1,
+    borderLeftColor: '#E5E7EB',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 46,
+  },
+  attStatusText: { fontSize: 11, fontWeight: '700' },
+  attPctValue: { fontSize: 12, color: '#1F2937', fontWeight: '700' },
+  attBulkRow: { flexDirection: 'row', gap: 8, marginBottom: Spacing.sm },
+  attHistoryRow: {
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: Radius.md,
+    padding: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+    backgroundColor: '#FFFFFF',
+    gap: 8,
+  },
+  attHistoryTitle: { fontSize: 13, fontWeight: '700', color: '#1F2937' },
+  attHistoryMeta: { fontSize: 11, color: '#64748B', marginTop: 2 },
+  attHistoryBadge: { borderRadius: Radius.full, paddingHorizontal: 10, paddingVertical: 4 },
+  attHistoryBadgeText: { fontSize: 11, fontWeight: '700' },
+  missingCard: {
+    borderWidth: 1,
+    borderColor: '#DC2626',
+    backgroundColor: '#FEF2F2',
+  },
+  missingTitle: { color: '#B91C1C' },
+  missingBadge: {
+    alignSelf: 'flex-start',
+    marginTop: 6,
+    marginBottom: 2,
+    backgroundColor: '#FEE2E2',
+    borderColor: '#FCA5A5',
+    borderWidth: 1,
+    borderRadius: Radius.full,
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+  },
+  missingBadgeText: { color: '#B91C1C', fontSize: 11, fontWeight: '800' },
+  gradesExportCard: {
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: Radius.lg,
+    backgroundColor: '#FFFFFF',
+    padding: Spacing.md,
+    ...Shadows.sm,
+  },
+  gradesExportHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    marginBottom: 12,
+  },
+  gradesExportTitle: { fontSize: 15, fontWeight: '700', color: '#1F2937' },
+  gradesExportMeta: { marginTop: 2, fontSize: 12, color: '#64748B' },
+  gradesExportStatusBadge: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: Radius.full,
+    marginBottom: 10,
+  },
+  gradesExportStatusText: { fontSize: 11, fontWeight: '700' },
+  gradesExportBtn: {
+    height: 42,
+    borderRadius: Radius.md,
+    backgroundColor: '#007ACC',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 8,
+  },
+  gradesExportBtnText: { color: '#FFFFFF', fontSize: 13, fontWeight: '700' },
+  moduleCanvasCard: {
+    borderWidth: 1,
+    borderRadius: Radius.md,
+    backgroundColor: '#FFFFFF',
+    marginBottom: Spacing.sm,
+    ...Shadows.sm,
+  },
+  moduleCanvasHeader: {
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: 8,
+  },
+  moduleCanvasHeaderLeft: { flex: 1, gap: 2 },
+  moduleCanvasHeaderRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  moduleCanvasWeekLabel: { color: '#6B6B6B', fontSize: 12, fontWeight: '600' },
+  moduleCanvasTitle: { color: '#2D2D2D', fontSize: 18, fontWeight: '600', lineHeight: 24 },
+  moduleCanvasDesc: { color: '#6B6B6B', fontSize: 13, marginTop: 2 },
+  statusBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: Radius.full, borderWidth: 1 },
+  statusBadgePublished: { backgroundColor: '#ECFDF3', borderColor: '#BBF7D0' },
+  statusBadgeDraft: { backgroundColor: '#F3F4F6', borderColor: '#E5E7EB' },
+  statusBadgeText: { fontSize: 11, fontWeight: '700' },
+  statusBadgeTextPublished: { color: '#166534' },
+  statusBadgeTextDraft: { color: '#6B7280' },
+  moduleProgressWrap: { paddingHorizontal: Spacing.md, paddingBottom: 10 },
+  moduleProgressTrack: { height: 7, borderRadius: 7, backgroundColor: '#E5E7EB', overflow: 'hidden' },
+  moduleProgressFill: { height: '100%', backgroundColor: Colors.primary, borderRadius: 7 },
+  moduleProgressText: { marginTop: 6, color: '#6B6B6B', fontSize: 12, fontWeight: '600' },
+  moduleCanvasBody: { borderTopWidth: 1, borderTopColor: '#E5E7EB', paddingHorizontal: Spacing.md, paddingBottom: Spacing.md, paddingTop: 6 },
+  moduleSectionLabel: { color: '#6B6B6B', fontSize: 12, fontWeight: '700', marginTop: 8, marginBottom: 4 },
+  moduleEmptyText: { color: '#94A3B8', fontSize: 12, marginBottom: 8 },
+  moduleCanvasItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+    paddingVertical: 10,
+    gap: 8,
+    paddingLeft: 20,
+  },
+  moduleCanvasItemDisabled: { opacity: 0.58 },
+  moduleItemTitle: { color: '#2D2D2D', fontSize: 14, fontWeight: '500' },
+  moduleItemMeta: { color: '#6B6B6B', fontSize: 13, marginTop: 2 },
+  moduleRequirement: { color: '#64748B', fontSize: 11, marginTop: 2 },
+  moduleItemRight: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingRight: 2 },
+  moduleFooterActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 },
+  moduleFooterBtn: {
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    backgroundColor: '#EFF6FF',
+    borderRadius: Radius.full,
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+  },
+  moduleFooterBtnText: { color: Colors.primary, fontSize: 12, fontWeight: '700' },
+  moduleCard: { borderRadius: Radius.lg, padding: Spacing.lg, marginBottom: Spacing.sm },
+  moduleHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: Spacing.sm },
+  weekBadge: { backgroundColor: Colors.primary + '15', paddingHorizontal: 10, paddingVertical: 3, borderRadius: Radius.full },
+  weekBadgeText: { fontSize: 11, fontWeight: '700' },
+  moduleTitle: { fontSize: 15, fontWeight: '600' },
+  moduleDesc: { fontSize: 13, marginTop: 4, lineHeight: 18 },
+  moduleExpanded: { marginTop: Spacing.md, paddingTop: Spacing.md, borderTopWidth: 1 },
+  moduleItemsLabel: { fontSize: 12, fontWeight: '700', marginBottom: 6 },
+  moduleItemRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 },
+  moduleItemMain: { flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1, paddingRight: 8 },
+  moduleItemText: { fontSize: 13, fontWeight: '500', flex: 1 },
+  noItemsText: { fontSize: 13, fontStyle: 'italic', textAlign: 'center' },
+  actCard: { borderRadius: Radius.lg, padding: Spacing.lg, marginBottom: Spacing.sm },
+  actHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.md, marginBottom: Spacing.sm },
+  actInfo: { flex: 1 },
+  actTitle: { fontSize: 15, fontWeight: '600' },
+  actDeadline: { fontSize: 12, marginTop: 3 },
+  pointsBadge: { backgroundColor: Colors.accentGold + '20', paddingHorizontal: 8, paddingVertical: 3, borderRadius: Radius.full },
+  pointsText: { fontSize: 11, fontWeight: '700', color: Colors.accentGold },
+  actDesc: { fontSize: 13, lineHeight: 18 },
+  topicBadge: { fontSize: 11, fontWeight: '600', marginBottom: 6 },
+  studentActionRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, flexWrap: 'wrap', marginBottom: 6 },
+  inlineBtn: {
+    backgroundColor: Colors.primary,
+    borderRadius: Radius.md,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    alignSelf: 'flex-start',
+  },
+  inlineBtnText: { color: '#FFFFFF', fontSize: 12, fontWeight: '700' },
+  gradePill: {
+    backgroundColor: '#2E7D321F',
+    color: '#2E7D32',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: Radius.full,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  pendingPill: {
+    backgroundColor: '#9CA3AF26',
+    color: '#374151',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: Radius.full,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  previewLabel: { fontSize: 12, fontWeight: '700', color: '#475569', marginBottom: 4 },
+  previewValue: { fontSize: 13, color: '#0F172A', marginBottom: 8 },
+  fileLink: { fontSize: 12, color: Colors.primary, marginBottom: 4, textDecorationLine: 'underline' },
+  detailTitle: { fontSize: 18, fontWeight: '800', color: '#0F172A', marginBottom: 8 },
+  detailHeroCard: {
+    borderRadius: Radius.lg,
+    padding: Spacing.lg,
+    marginBottom: Spacing.md,
+  },
+  detailHeroTitle: { color: '#FFFFFF', fontSize: 20, fontWeight: '800', marginBottom: 8, lineHeight: 26 },
+  detailHeroMetaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 6 },
+  detailHeroMetaBadge: {
+    color: '#FFFFFF',
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: Radius.full,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  detailHeroMetaText: { color: '#E2E8F0', fontSize: 12, fontWeight: '600' },
+  detailCard: {
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#FFFFFF',
+    borderRadius: Radius.lg,
+    padding: Spacing.lg,
+    marginBottom: Spacing.md,
+  },
+  detailCardTitle: { fontSize: 14, fontWeight: '800', color: '#0F172A', marginBottom: 8 },
+  detailCardBody: { fontSize: 14, color: '#334155', lineHeight: 20 },
+  primaryActionBtn: {
+    backgroundColor: Colors.primary,
+    borderWidth: 1,
+    borderColor: Colors.primary,
+    borderRadius: Radius.md,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    marginTop: 6,
+  },
+  primaryActionBtnText: { color: '#FFFFFF', fontSize: 14, fontWeight: '800' },
+  fileRow: { borderRadius: Radius.lg, padding: Spacing.md, marginBottom: Spacing.sm, gap: Spacing.sm },
+  fileMainRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md },
+  fileIcon: { width: 44, height: 44, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center' },
+  fileInfo: { flex: 1 },
+  fileName: { fontSize: 14, fontWeight: '500' },
+  fileMeta: { fontSize: 11, marginTop: 2 },
+  annCard: { borderRadius: Radius.lg, padding: Spacing.lg, marginBottom: Spacing.sm },
+  annHeader: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, marginBottom: Spacing.sm },
+  annTitle: { flex: 1, fontSize: 15, fontWeight: '700' },
+  annBody: { fontSize: 14, lineHeight: 20, marginBottom: Spacing.sm },
+  annDate: { fontSize: 11 },
+  quizCard: { borderRadius: Radius.lg, padding: Spacing.lg, marginBottom: Spacing.sm },
+  quizHeader: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, marginBottom: Spacing.sm },
+  quizStatusDot: { width: 8, height: 8, borderRadius: 4 },
+  quizTitle: { flex: 1, fontSize: 15, fontWeight: '600' },
+  quizBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: Radius.full },
+  quizBadgeText: { fontSize: 11, fontWeight: '600' },
+  quizMeta: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.md, marginBottom: Spacing.sm },
+  quizMetaItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  quizMetaText: { fontSize: 12 },
+  startQuizBtn: {
+    backgroundColor: Colors.primary,
+    borderWidth: 1,
+    borderColor: Colors.primary,
+    borderRadius: Radius.md,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    alignItems: 'center',
+    marginTop: Spacing.sm,
+  },
+  startQuizText: { color: '#FFFFFF', fontSize: 12, fontWeight: '700' },
+  emptyState: { alignItems: 'center', paddingVertical: 60 },
+  emptyIcon: { fontSize: 40, marginBottom: Spacing.md },
+  emptyTitle: { fontSize: 16, color: '#5A6A85', fontWeight: '500' },
+  fab: {
+    position: 'absolute',
+    bottom: 32,
+    right: Spacing.xl,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: Colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...Shadows.card,
+  },
+  itemActions: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
+  actionBtn: { padding: 4 },
+  modalWrap: { flex: 1 },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.xl,
+    paddingTop: 56,
+    paddingBottom: Spacing.lg,
+    borderBottomWidth: 1,
+  },
+  modalCancel: { fontSize: 16 },
+  modalTitle: { fontSize: 17, fontWeight: '700' },
+  modalSave: { fontSize: 16, color: Colors.primary, fontWeight: '700' },
+  modalBody: { padding: Spacing.xl, paddingBottom: 80 },
+  assignmentHeaderCard: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#DDDDDD',
+    borderRadius: Radius.lg,
+    padding: Spacing.md,
+    marginBottom: Spacing.md,
+  },
+  assignmentHeaderTopRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: Spacing.sm, marginBottom: 8 },
+  assignmentTitleText: { flex: 1, fontSize: 18, fontWeight: '600', color: '#333333' },
+  assignmentStatusBadge: {
+    backgroundColor: '#007ACC20',
+    color: '#007ACC',
+    borderWidth: 1,
+    borderColor: '#007ACC40',
+    borderRadius: Radius.full,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    fontSize: 11,
+    fontWeight: '700',
+    overflow: 'hidden',
+  },
+  assignmentMetaRow: { flexDirection: 'row', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 },
+  assignmentMetaText: { fontSize: 12, color: '#4B5563', fontWeight: '500' },
+  assignmentUploadCard: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#DDDDDD',
+    borderRadius: Radius.lg,
+    padding: Spacing.md,
+    marginBottom: Spacing.md,
+  },
+  assignmentSectionTitle: { fontSize: 14, fontWeight: '700', color: '#333333', marginBottom: 6 },
+  assignmentHintText: { fontSize: 12, color: '#6B7280', marginBottom: 8 },
+  uploadDropZone: {
+    borderWidth: 1.5,
+    borderColor: '#007ACC',
+    borderStyle: 'dashed',
+    borderRadius: Radius.lg,
+    backgroundColor: '#F5FAFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 18,
+    paddingHorizontal: 14,
+    marginBottom: Spacing.sm,
+  },
+  uploadDropZoneText: { color: '#007ACC', fontSize: 14, fontWeight: '700', marginTop: 6 },
+  uploadDropZoneSubText: { color: '#4B5563', fontSize: 12, marginTop: 2 },
+  uploadActionsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm },
+  uploadSecondaryBtn: {
+    borderWidth: 1,
+    borderColor: '#007ACC',
+    borderRadius: Radius.md,
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  uploadSecondaryBtnText: { color: '#007ACC', fontSize: 12, fontWeight: '700' },
+  uploadedFileCard: {
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: Radius.md,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginBottom: 10,
+    gap: 8,
+    backgroundColor: '#FFFFFF',
+  },
+  uploadedFileRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  uploadedFileIconWrap: {
+    width: 42,
+    height: 42,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    backgroundColor: '#EFF6FF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  uploadedFileLeft: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 },
+  uploadedFileInfo: { flex: 1 },
+  uploadedFileName: { fontSize: 13, color: '#333333', fontWeight: '600' },
+  uploadedFileSize: { fontSize: 11, color: '#6B7280', marginTop: 2 },
+  fullPreviewWrap: { width: '100%' },
+  uploadedImagePreview: {
+    width: '100%',
+    borderRadius: Radius.sm,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    backgroundColor: '#FFFFFF',
+  },
+  uploadedDocPreview: {
+    width: '100%',
+    minHeight: 140,
+    borderRadius: Radius.sm,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    backgroundColor: '#F8FBFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 16,
+    gap: 6,
+  },
+  uploadedDocPreviewTitle: { color: '#0F172A', fontSize: 14, fontWeight: '700' },
+  uploadedDocPreviewHint: { color: '#475569', fontSize: 12, fontWeight: '500' },
+  uploadFileRemoveBtn: { padding: 2 },
+  previewBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.86)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: Spacing.lg,
+  },
+  previewCloseBtn: {
+    position: 'absolute',
+    top: 56,
+    right: 20,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255,255,255,0.22)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 5,
+  },
+  previewImage: { width: '100%', height: '82%' },
+  inlineErrorBox: {
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    backgroundColor: '#FEF2F2',
+    borderRadius: Radius.md,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginBottom: Spacing.sm,
+  },
+  inlineErrorText: { color: '#B91C1C', fontSize: 12, fontWeight: '600' },
+  inlineSuccessBox: {
+    borderWidth: 1,
+    borderColor: '#86EFAC',
+    backgroundColor: '#F0FDF4',
+    borderRadius: Radius.md,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginBottom: Spacing.sm,
+  },
+  inlineSuccessText: { color: '#166534', fontSize: 12, fontWeight: '600' },
+  assignmentReviewCard: {
+    borderWidth: 1,
+    borderColor: '#DDDDDD',
+    borderRadius: Radius.lg,
+    backgroundColor: '#FFFFFF',
+    padding: Spacing.md,
+    marginBottom: Spacing.md,
+  },
+  assignmentActionButtonsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm, justifyContent: 'space-between' },
+  assignmentReviewBtn: {
+    flexGrow: 1,
+    minWidth: 120,
+    borderWidth: 1,
+    borderColor: '#DDDDDD',
+    backgroundColor: '#FFFFFF',
+    borderRadius: Radius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+  },
+  assignmentReviewBtnText: { color: '#333333', fontSize: 13, fontWeight: '600' },
+  assignmentSubmitBtn: {
+    flexGrow: 1,
+    minWidth: 120,
+    borderWidth: 1,
+    borderColor: '#007ACC',
+    backgroundColor: '#007ACC',
+    borderRadius: Radius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+  },
+  assignmentSubmitBtnDisabled: { backgroundColor: '#9CA3AF', borderColor: '#9CA3AF' },
+  assignmentSubmitBtnText: { color: '#FFFFFF', fontSize: 13, fontWeight: '700' },
+  fieldWrap: { marginBottom: Spacing.md },
+  fieldLabel: { fontSize: 12, fontWeight: '700', color: '#334155', marginBottom: 6 },
+  fieldInput: {
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: Radius.md,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: '#0F172A',
+    backgroundColor: '#FFFFFF',
+  },
+  fieldInputMulti: { minHeight: 96, textAlignVertical: 'top' },
+  topicPickerRow: { gap: Spacing.sm, paddingVertical: 2 },
+  typeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm },
+  topicChip: {
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: Radius.full,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: '#FFFFFF',
+  },
+  topicChipActive: {
+    borderColor: Colors.primary,
+    backgroundColor: Colors.primary + '18',
+  },
+  topicChipText: { fontSize: 12, color: '#334155', fontWeight: '500' },
+  topicChipTextActive: { color: Colors.primary, fontWeight: '700' },
+  datePickerWrap: { marginBottom: Spacing.md },
+  dateHint: { fontSize: 12, color: '#475569', marginTop: 4 },
+  toggleRow: {
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: Radius.md,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 12,
+    backgroundColor: '#FFFFFF',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  toggleText: { fontSize: 14, color: Colors.primary, fontWeight: '700' },
+  quizQuestionCard: {
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: Radius.md,
+    padding: Spacing.md,
+    marginBottom: Spacing.md,
+    backgroundColor: '#FFFFFF',
+  },
+  quizTimerBanner: {
+    borderWidth: 1,
+    borderColor: '#F59E0B',
+    backgroundColor: '#FEF3C7',
+    borderRadius: Radius.md,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginBottom: Spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  quizTimerText: { fontSize: 12, fontWeight: '800', color: '#92400E' },
+  quizQuestionTitle: { fontSize: 14, fontWeight: '700', marginBottom: 8, color: '#0F172A' },
+  choiceRow: {
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: Radius.md,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 8,
+    backgroundColor: '#FFFFFF',
+  },
+  choiceRowActive: { borderColor: Colors.primary, backgroundColor: Colors.primary + '12' },
+  choiceText: { fontSize: 13, color: '#1F2937' },
+  resultRow: { fontSize: 15, fontWeight: '600', color: '#1E293B', marginBottom: 8 },
+  gradeCard: {
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: Radius.md,
+    padding: 0,
+    backgroundColor: '#FFFFFF',
+    marginBottom: Spacing.md,
+  },
+  gradeAccordionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 12,
+  },
+  gradeAccordionMeta: { fontSize: 12, color: '#475569', marginTop: 2 },
+  gradeAccordionBody: {
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 10,
+  },
+  gradeStudent: { fontSize: 14, fontWeight: '800', color: '#0F172A' },
+  teacherPreviewCard: {
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: Radius.md,
+    padding: 8,
+    backgroundColor: '#FFFFFF',
+    marginBottom: 8,
+  },
+  teacherPreviewImage: {
+    width: '100%',
+    minHeight: 160,
+    maxHeight: 360,
+    borderRadius: Radius.sm,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    backgroundColor: '#FFFFFF',
+  },
+  answerRow: {
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+    paddingTop: 8,
+    marginTop: 8,
+    borderRadius: Radius.sm,
+    paddingHorizontal: 8,
+    paddingBottom: 8,
+  },
+  answerRowCorrect: {
+    backgroundColor: '#DCFCE7',
+    borderWidth: 1,
+    borderColor: '#86EFAC',
+  },
+  answerRowIncorrect: {
+    backgroundColor: '#FEE2E2',
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+  },
+  answerQ: { fontSize: 13, fontWeight: '700', color: '#0F172A', marginBottom: 4 },
+  answerA: { fontSize: 12, color: '#334155', marginBottom: 6 },
+  choiceEditRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  scoreRingLabel: { position: 'absolute', alignItems: 'center', justifyContent: 'center' },
+  scoreRingValue: { fontSize: 20, fontWeight: '800', color: '#0F172A' },
+  scoreRingMax: { fontSize: 12, color: '#64748B' },
+  quizInfoScoreCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: Radius.lg,
+    padding: Spacing.md,
+    backgroundColor: '#FFFFFF',
+    marginBottom: Spacing.md,
+  },
+  resultRingWrap: { alignItems: 'center', marginBottom: 12 },
+  resultStatsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  resultStatCard: {
+    width: '48%',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: Radius.md,
+    padding: 10,
+    backgroundColor: '#F8FAFC',
+  },
+  resultStatLabel: { fontSize: 11, color: '#64748B', fontWeight: '700', marginBottom: 2 },
+  resultStatValue: { fontSize: 14, color: '#0F172A', fontWeight: '800' },
+  distCard: {
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: Radius.md,
+    padding: 12,
+    backgroundColor: '#F8FAFC',
+  },
+  distWrap: {
+    position: 'relative',
+    paddingTop: 26,
+    paddingBottom: 26,
+    paddingHorizontal: 4,
+  },
+  distTrack: {
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#CBD5E1',
+  },
+  distMarkerWrap: {
+    position: 'absolute',
+    top: 0,
+    transform: [{ translateX: -16 }],
+    alignItems: 'center',
+    width: 32,
+  },
+  distMarker: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    marginTop: 20,
+    borderWidth: 1,
+    borderColor: '#FFFFFF',
+  },
+  distMarkerLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#334155',
+  },
+  distMarkerValue: {
+    fontSize: 10,
+    color: '#64748B',
+  },
+  distEnds: {
+    marginTop: 6,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  distEndText: {
+    fontSize: 11,
+    color: '#64748B',
+    fontWeight: '700',
+  },
+  attemptRow: {
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
+    borderRadius: Radius.md,
+    padding: 10,
+    marginBottom: 8,
+  },
+  attemptLabel: { fontSize: 12, fontWeight: '800', color: '#0F172A' },
+  attemptValue: { fontSize: 13, fontWeight: '700', color: '#1E293B', marginTop: 2 },
+  attemptTime: { fontSize: 12, color: '#64748B', marginTop: 2 },
+});
