@@ -24,6 +24,8 @@ function RootLayoutInner() {
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="index" />
         <Stack.Screen name="login" />
+        <Stack.Screen name="forgot-password" />
+        <Stack.Screen name="account-setup" />
         <Stack.Screen name="(app)" />
       </Stack>
       <Toast />

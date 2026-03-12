@@ -30,6 +30,7 @@ export interface Profile {
   employee_id?: string;
   student_id?: string;
   theme?: 'light' | 'dark' | 'system';
+  requires_setup?: boolean;
   created_at: string;
   updated_at: string;
 }

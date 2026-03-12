@@ -6,6 +6,7 @@ export const Colors = {
   accentRed: '#C0272D',
   accentGold: '#D4A017',
   accentRope: '#C8A96E',
+  success: '#10B981',
 
   light: {
     background: '#F4F6FA',

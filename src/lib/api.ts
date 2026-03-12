@@ -166,3 +166,13 @@ export const api = {
     request(path, { method: 'PATCH', body: formData, auth, isFormData: true }),
   getRaw: (path: string, auth = true) => requestRaw(path, { method: 'GET', auth }),
 };
+
+// Auth API helpers
+export const authApi = {
+  changePassword: async (newPassword: string) => {
+    return api.post('/auth/change-password/', { new_password: newPassword });
+  },
+  forgotPassword: async (email: string) => {
+    return api.post('/auth/forgot-password/', { email }, false);
+  },
+};

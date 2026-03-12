@@ -1,4 +1,4 @@
-// src/components/auth/LoginScreen.tsx
+// src/components/auth/ForgotPasswordScreen.tsx
 import React, { useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity,
@@ -6,38 +6,86 @@ import {
   Platform, ActivityIndicator, Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { useAuth } from '@/contexts/AuthContext';
+import { authApi } from '@/lib/api';
 import { useTheme } from '@/contexts/ThemeContext';
 import { Colors, Spacing, Radius, Shadows } from '@/constants/colors';
 
-export function LoginScreen() {
+export function ForgotPasswordScreen() {
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
-  const [showPassword, setShowPassword] = useState(false);
-  const { signIn } = useAuth();
+  const [submitted, setSubmitted] = useState(false);
   const { colors } = useTheme();
   const router = useRouter();
 
   const handleSubmit = async () => {
-    if (!email.trim() || !password.trim()) {
-      Alert.alert('Error', 'Please enter your email and password.');
+    if (!email.trim()) {
+      Alert.alert('Error', 'Please enter your school email address.');
       return;
     }
+
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email.trim())) {
+      Alert.alert('Error', 'Please enter a valid email address.');
+      return;
+    }
+
     setLoading(true);
     try {
-      const result = await signIn(email.trim(), password);
-      if (result.requiresSetup) {
-        router.replace('/account-setup');
-      } else {
-        router.replace('/(app)/(tabs)/dashboard');
-      }
+      await authApi.forgotPassword(email.trim());
+      setSubmitted(true);
     } catch (error: any) {
-      Alert.alert('Login Failed', error.message || 'Please check your credentials and try again.');
+      // Even on error, show success message to prevent email enumeration
+      setSubmitted(true);
     } finally {
       setLoading(false);
     }
   };
+
+  if (submitted) {
+    return (
+      <KeyboardAvoidingView
+        style={[styles.flex, { backgroundColor: colors.background }]}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      >
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+        >
+          {/* Header */}
+          <View style={styles.header}>
+            <View style={styles.logoBadge}>
+              <Text style={styles.logoBadgeText}>HNA</Text>
+            </View>
+            <Text style={[styles.title, { color: Colors.primary }]}>Request Submitted</Text>
+          </View>
+
+          {/* Success Card */}
+          <View style={[styles.card, { backgroundColor: colors.surface }, Shadows.card]}>
+            <View style={styles.successIcon}>
+              <Text style={styles.successIconText}>✓</Text>
+            </View>
+            <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>
+              Check Your Email
+            </Text>
+            <Text style={[styles.successText, { color: colors.textSecondary }]}>
+              If an account exists with the email {email}, a password reset request has been submitted.
+            </Text>
+            <Text style={[styles.successText, { color: colors.textSecondary }]}>
+              Please wait for administrator approval. You will receive a new password at your personal email address once approved.
+            </Text>
+
+            <TouchableOpacity
+              style={styles.submitBtn}
+              onPress={() => router.replace('/login')}
+            >
+              <Text style={styles.submitBtnText}>Back to Login</Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    );
+  }
 
   return (
     <KeyboardAvoidingView
@@ -53,24 +101,27 @@ export function LoginScreen() {
           <View style={styles.logoBadge}>
             <Text style={styles.logoBadgeText}>HNA</Text>
           </View>
-          <Text style={[styles.title, { color: Colors.primary }]}>HNA Acadex</Text>
+          <Text style={[styles.title, { color: Colors.primary }]}>Forgot Password</Text>
           <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
-            Holy Name Academy of Palanas, Inc.
+            Enter your school email to request a password reset
           </Text>
         </View>
 
         {/* Card */}
         <View style={[styles.card, { backgroundColor: colors.surface }, Shadows.card]}>
-          <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Sign In</Text>
+          <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Reset Password</Text>
+          <Text style={[styles.hint, { color: colors.textSecondary }]}>
+            Enter your school email address (@hna.edu.ph). A password reset request will be submitted for administrator approval.
+          </Text>
 
           {/* Email */}
           <View style={styles.fieldGroup}>
-            <Text style={[styles.label, { color: colors.textPrimary }]}>Email Address</Text>
+            <Text style={[styles.label, { color: colors.textPrimary }]}>School Email</Text>
             <TextInput
               style={[styles.input, { backgroundColor: colors.muted, color: colors.textPrimary, borderColor: colors.border }]}
               value={email}
               onChangeText={setEmail}
-              placeholder="student@hna.edu.ph"
+              placeholder="yourname@hna.edu.ph"
               placeholderTextColor={colors.mutedForeground}
               keyboardType="email-address"
               autoCapitalize="none"
@@ -78,44 +129,22 @@ export function LoginScreen() {
             />
           </View>
 
-          {/* Password */}
-          <View style={styles.fieldGroup}>
-            <Text style={[styles.label, { color: colors.textPrimary }]}>Password</Text>
-            <View style={[styles.passwordRow, { backgroundColor: colors.muted, borderColor: colors.border }]}>
-              <TextInput
-                style={[styles.passwordInput, { color: colors.textPrimary }]}
-                value={password}
-                onChangeText={setPassword}
-                placeholder="Enter your password"
-                placeholderTextColor={colors.mutedForeground}
-                secureTextEntry={!showPassword}
-                autoCapitalize="none"
-              />
-              <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeBtn}>
-                <Text style={{ color: colors.textSecondary, fontSize: 13 }}>
-                  {showPassword ? 'Hide' : 'Show'}
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-
           {/* Submit */}
           <TouchableOpacity
             style={[styles.submitBtn, loading && styles.submitBtnDisabled]}
             onPress={handleSubmit}
             disabled={loading}
-            activeOpacity={0.85}
           >
             {loading
               ? <ActivityIndicator color="#FFFFFF" />
-              : <Text style={styles.submitBtnText}>Sign In</Text>
+              : <Text style={styles.submitBtnText}>Submit Request</Text>
             }
           </TouchableOpacity>
 
-          {/* Forgot Password */}
-          <TouchableOpacity style={styles.forgotBtn} onPress={() => router.push('/forgot-password')}>
-            <Text style={[styles.forgotText, { color: Colors.primaryLight }]}>
-              Forgot Password?
+          {/* Back to login */}
+          <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
+            <Text style={[styles.backBtnText, { color: Colors.primaryLight }]}>
+              Back to Login
             </Text>
           </TouchableOpacity>
         </View>
@@ -123,10 +152,10 @@ export function LoginScreen() {
         {/* Info hint */}
         <View style={[styles.hintCard, { backgroundColor: colors.muted }]}>
           <Text style={[styles.hintTitle, { color: colors.textPrimary }]}>
-            Account Access
+            How It Works
           </Text>
           <Text style={[styles.hintBody, { color: colors.textSecondary }]}>
-            Accounts are created by the school administrator. Contact your admin if you don't have access.
+            {'1. Submit your school email above\n2. Wait for admin approval\n3. Check your personal email for new credentials\n4. Login with the new password'}
           </Text>
         </View>
       </ScrollView>
@@ -162,13 +191,13 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   title: {
-    fontSize: 32,
+    fontSize: 28,
     fontWeight: '800',
     letterSpacing: -0.5,
     marginBottom: 4,
   },
   subtitle: {
-    fontSize: 13,
+    fontSize: 14,
     textAlign: 'center',
   },
   card: {
@@ -177,8 +206,14 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.lg,
   },
   cardTitle: {
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: '700',
+    marginBottom: Spacing.sm,
+    textAlign: 'center',
+  },
+  hint: {
+    fontSize: 13,
+    textAlign: 'center',
     marginBottom: Spacing.xl,
   },
   fieldGroup: {
@@ -196,20 +231,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
     borderWidth: 1,
   },
-  passwordRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderRadius: Radius.md,
-    borderWidth: 1,
-    paddingRight: Spacing.md,
-  },
-  passwordInput: {
-    flex: 1,
-    height: 48,
-    paddingHorizontal: Spacing.md,
-    fontSize: 15,
-  },
-  eyeBtn: { padding: 4 },
   submitBtn: {
     height: 50,
     backgroundColor: Colors.primary,
@@ -224,12 +245,12 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
-  forgotBtn: {
+  backBtn: {
     alignItems: 'center',
     marginTop: Spacing.md,
     paddingVertical: Spacing.sm,
   },
-  forgotText: { fontSize: 14 },
+  backBtnText: { fontSize: 14 },
   hintCard: {
     borderRadius: Radius.lg,
     padding: Spacing.lg,
@@ -237,7 +258,28 @@ const styles = StyleSheet.create({
   hintTitle: {
     fontSize: 13,
     fontWeight: '600',
-    marginBottom: 4,
+    marginBottom: 8,
   },
   hintBody: { fontSize: 12, lineHeight: 18 },
+  successIcon: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: Colors.success,
+    alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'center',
+    marginBottom: Spacing.lg,
+  },
+  successIconText: {
+    color: '#FFFFFF',
+    fontSize: 32,
+    fontWeight: '600',
+  },
+  successText: {
+    fontSize: 14,
+    textAlign: 'center',
+    marginBottom: Spacing.md,
+    lineHeight: 20,
+  },
 });

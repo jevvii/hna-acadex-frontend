@@ -12,7 +12,12 @@ export function SplashScreen() {
   useEffect(() => {
     if (!loading) {
       if (user) {
-        router.replace('/(app)/(tabs)/dashboard');
+        // Check if user needs to complete setup
+        if (user.requires_setup) {
+          router.replace('/account-setup');
+        } else {
+          router.replace('/(app)/(tabs)/dashboard');
+        }
       } else {
         const t = setTimeout(() => router.replace('/login'), 2000);
         return () => clearTimeout(t);
