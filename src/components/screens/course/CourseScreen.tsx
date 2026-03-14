@@ -18,6 +18,7 @@ import { api, API_BASE_URL } from '@/lib/api';
 import { DateTimePicker } from '@/components/shared/DateTimePicker';
 import { DateTimePickerModal } from '@/components/shared/DateTimePickerModal';
 import { DocumentViewerModal } from '@/components/shared/DocumentViewerModal';
+import { QuickQuizBuilderModal } from '@/components/shared/QuickQuizBuilderModal';
 import { RichTextInput } from '@/components/shared/RichTextInput';
 import { FormattedText } from '@/components/shared/FormattedText';
 import { ActivityDetailsScreen } from '@/screens/course/ActivityDetailsScreen';
@@ -423,8 +424,6 @@ export function CourseScreen() {
   const [deadlinePickerVisible, setDeadlinePickerVisible] = useState(false);
   const [quizOpenPickerVisible, setQuizOpenPickerVisible] = useState(false);
   const [quizClosePickerVisible, setQuizClosePickerVisible] = useState(false);
-  const [quickQuizOpenPickerVisible, setQuickQuizOpenPickerVisible] = useState(false);
-  const [quickQuizClosePickerVisible, setQuickQuizClosePickerVisible] = useState(false);
 
   // Score selection policy state for quiz editing (separate from form state)
   const [quizScorePolicy, setQuizScorePolicy] = useState<'latest' | 'highest'>('highest');
@@ -471,18 +470,6 @@ export function CourseScreen() {
   const [expandedQuizAttemptKey, setExpandedQuizAttemptKey] = useState<string | null>(null);
 
   const [quickQuizBuilderVisible, setQuickQuizBuilderVisible] = useState(false);
-  const [quickQuizTitle, setQuickQuizTitle] = useState('');
-  const [quickQuizInstructions, setQuickQuizInstructions] = useState('');
-  const [quickQuizWeeklyModuleId, setQuickQuizWeeklyModuleId] = useState<string | null>(null);
-  const [quickQuizAttemptLimit, setQuickQuizAttemptLimit] = useState('1');
-  const [quickQuizTimeLimit, setQuickQuizTimeLimit] = useState('30');
-  const [quickQuizHasOpenAt, setQuickQuizHasOpenAt] = useState(false);
-  const [quickQuizOpenAt, setQuickQuizOpenAt] = useState(new Date());
-  const [quickQuizOpenHasTime, setQuickQuizOpenHasTime] = useState(true);
-  const [quickQuizHasCloseAt, setQuickQuizHasCloseAt] = useState(false);
-  const [quickQuizCloseAt, setQuickQuizCloseAt] = useState(new Date(Date.now() + 60 * 60 * 1000));
-  const [quickQuizCloseHasTime, setQuickQuizCloseHasTime] = useState(true);
-  const [quickQuizQuestions, setQuickQuizQuestions] = useState<any[]>([]);
   const [creatingQuickQuiz, setCreatingQuickQuiz] = useState(false);
 
   const [quizInfoModalVisible, setQuizInfoModalVisible] = useState(false);
@@ -1599,98 +1586,8 @@ export function CourseScreen() {
     }
   };
 
-  const addQuickQuestion = () => {
-    setQuickQuizQuestions((prev) => [
-      ...prev,
-      {
-        question_text: '',
-        question_type: 'multiple_choice',
-        points: 1,
-        choices: [
-          { choice_text: '', is_correct: true, sort_order: 0 },
-          { choice_text: '', is_correct: false, sort_order: 1 },
-          { choice_text: '', is_correct: false, sort_order: 2 },
-          { choice_text: '', is_correct: false, sort_order: 3 },
-        ],
-      },
-    ]);
-  };
-
-  const createQuickQuiz = async () => {
-    if (!id) return;
-    if (!quickQuizTitle.trim()) {
-      Alert.alert('Required', 'Quiz title is required.');
-      return;
-    }
-    setCreatingQuickQuiz(true);
-    try {
-      const payloadQuestions = quickQuizQuestions
-        .filter((q) => q.question_text.trim())
-        .map((q: any, idx: number) => ({
-          question_text: q.question_text.trim(),
-          question_type: q.question_type,
-          points: Number(q.points || 1),
-          sort_order: idx,
-          choices: q.question_type === 'essay'
-            ? []
-            : (q.choices || []).map((c: any, cIdx: number) => ({
-                choice_text: c.choice_text,
-                is_correct: !!c.is_correct,
-                sort_order: cIdx,
-              })),
-        }));
-
-      if (quickQuizHasOpenAt && quickQuizHasCloseAt && quickQuizCloseAt <= quickQuizOpenAt) {
-        Alert.alert('Invalid Dates', 'Close date/time must be after open date/time.');
-        setCreatingQuickQuiz(false);
-        return;
-      }
-
-      await api.post('/quizzes/quick-create/', {
-        course_section_id: id,
-        title: quickQuizTitle.trim(),
-        weekly_module_id: quickQuizWeeklyModuleId,
-        instructions: quickQuizInstructions.trim() || null,
-        attempt_limit: Number(quickQuizAttemptLimit || '1'),
-        time_limit_minutes: Number(quickQuizTimeLimit || '30'),
-        open_at: quickQuizHasOpenAt ? quickQuizOpenAt.toISOString() : null,
-        close_at: quickQuizHasCloseAt ? quickQuizCloseAt.toISOString() : null,
-        questions: payloadQuestions,
-        is_published: true,
-        show_results: true,
-      });
-      setQuickQuizBuilderVisible(false);
-      setQuickQuizTitle('');
-      setQuickQuizInstructions('');
-      setQuickQuizWeeklyModuleId(null);
-      setQuickQuizAttemptLimit('1');
-      setQuickQuizTimeLimit('30');
-      setQuickQuizHasOpenAt(false);
-      setQuickQuizHasCloseAt(false);
-      setQuickQuizQuestions([]);
-      await fetchData();
-      Alert.alert('Success', 'Quiz created.');
-    } catch (e: any) {
-      Alert.alert('Error', e.message || 'Could not create quick quiz.');
-    } finally {
-      setCreatingQuickQuiz(false);
-    }
-  };
-
   const openPrimaryAdd = () => {
     if (activeTab === 'quizzes') {
-      setQuickQuizTitle('');
-      setQuickQuizInstructions('');
-      setQuickQuizWeeklyModuleId(null);
-      setQuickQuizAttemptLimit('1');
-      setQuickQuizTimeLimit('30');
-      setQuickQuizHasOpenAt(false);
-      setQuickQuizOpenAt(new Date());
-      setQuickQuizOpenHasTime(true);
-      setQuickQuizHasCloseAt(false);
-      setQuickQuizCloseAt(new Date(Date.now() + 60 * 60 * 1000));
-      setQuickQuizCloseHasTime(true);
-      setQuickQuizQuestions([]);
       setQuickQuizBuilderVisible(true);
       return;
     }
@@ -3307,186 +3204,59 @@ export function CourseScreen() {
         </View>
       </Modal>
 
-      <Modal visible={quickQuizBuilderVisible} animationType="slide" onRequestClose={() => setQuickQuizBuilderVisible(false)}>
-        <KeyboardAvoidingView style={[styles.modalWrap, { backgroundColor: colors.background }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-          <View style={[styles.modalHeader, { borderBottomColor: colors.border, backgroundColor: colors.surface }]}>
-            <TouchableOpacity onPress={() => setQuickQuizBuilderVisible(false)}><Text style={[styles.modalCancel, { color: colors.textSecondary }]}>Cancel</Text></TouchableOpacity>
-            <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Quick Quiz Builder</Text>
-            <TouchableOpacity onPress={createQuickQuiz} disabled={creatingQuickQuiz}>{creatingQuickQuiz ? <ActivityIndicator size="small" color={Colors.primary} /> : <Text style={styles.modalSave}>Create</Text>}</TouchableOpacity>
-          </View>
-          <ScrollView contentContainerStyle={styles.modalBody}>
-            <Field label="Quiz Title" value={quickQuizTitle} headerLabel onChangeText={setQuickQuizTitle} />
-            <RichTextInput label="Instructions" value={quickQuizInstructions} onChangeText={setQuickQuizInstructions} headerStyle />
-            <View style={styles.fieldWrap}>
-              <Text style={styles.fieldLabel}>Week Topic</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.topicPickerRow}>
-                <TouchableOpacity
-                  style={[styles.topicChip, !quickQuizWeeklyModuleId && styles.topicChipActive]}
-                  onPress={() => setQuickQuizWeeklyModuleId(null)}
-                >
-                  <Text style={[styles.topicChipText, !quickQuizWeeklyModuleId && styles.topicChipTextActive]}>Unassigned</Text>
-                </TouchableOpacity>
-                {modules.map((m) => (
-                  <TouchableOpacity
-                    key={`quick-week-${m.id}`}
-                    style={[styles.topicChip, quickQuizWeeklyModuleId === m.id && styles.topicChipActive]}
-                    onPress={() => setQuickQuizWeeklyModuleId(m.id)}
-                  >
-                    <Text style={[styles.topicChipText, quickQuizWeeklyModuleId === m.id && styles.topicChipTextActive]}>
-                      Week {m.week_number}: {m.title}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-            </View>
-            <Field label="Attempt Limit" value={quickQuizAttemptLimit} keyboardType="numeric" onChangeText={setQuickQuizAttemptLimit} />
-            <View style={styles.fieldWrap}>
-              <Text style={styles.fieldLabel}>Time Limit (minutes)</Text>
-              <View style={styles.typeRow}>
-                {[10, 15, 20, 30, 45, 60, 90].map((min) => {
-                  const active = quickQuizTimeLimit === String(min);
-                  return (
-                    <TouchableOpacity
-                      key={`min-${min}`}
-                      style={[styles.topicChip, active && styles.topicChipActive]}
-                      onPress={() => setQuickQuizTimeLimit(String(min))}
-                    >
-                      <Text style={[styles.topicChipText, active && styles.topicChipTextActive]}>{min}m</Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            </View>
-            <ToggleRow
-              label="Set Open Date"
-              value={quickQuizHasOpenAt}
-              onToggle={() => {
-                const newValue = !quickQuizHasOpenAt;
-                setQuickQuizHasOpenAt(newValue);
-                if (newValue && !quickQuizOpenAt) {
-                  setQuickQuizOpenAt(new Date());
-                }
-                if (newValue) {
-                  setQuickQuizOpenPickerVisible(true);
-                }
-              }}
-            />
-            {quickQuizHasOpenAt && (
-              <TouchableOpacity
-                style={styles.datePickerButton}
-                onPress={() => setQuickQuizOpenPickerVisible(true)}
-              >
-                <Ionicons name="calendar-outline" size={20} color={Colors.primary} />
-                <Text style={styles.datePickerButtonText}>
-                  Opens: {formatDate(quickQuizOpenAt.toISOString())}
-                </Text>
-                <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
-              </TouchableOpacity>
-            )}
-            <ToggleRow
-              label="Set Close Date"
-              value={quickQuizHasCloseAt}
-              onToggle={() => {
-                const newValue = !quickQuizHasCloseAt;
-                setQuickQuizHasCloseAt(newValue);
-                if (newValue && !quickQuizCloseAt) {
-                  setQuickQuizCloseAt(new Date(Date.now() + 60 * 60 * 1000));
-                }
-                if (newValue) {
-                  setQuickQuizClosePickerVisible(true);
-                }
-              }}
-            />
-            {quickQuizHasCloseAt && (
-              <TouchableOpacity
-                style={styles.datePickerButton}
-                onPress={() => setQuickQuizClosePickerVisible(true)}
-              >
-                <Ionicons name="calendar-outline" size={20} color={Colors.primary} />
-                <Text style={styles.datePickerButtonText}>
-                  Closes: {formatDate(quickQuizCloseAt.toISOString())}
-                </Text>
-                <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
-              </TouchableOpacity>
-            )}
-            {quickQuizQuestions.map((q, idx) => (
-              <View key={`quick-q-${idx}`} style={styles.gradeCard}>
-                <Text style={styles.gradeStudent}>Question {idx + 1}</Text>
-                <Field
-                  label="Question Text"
-                  value={q.question_text}
-                  onChangeText={(v) =>
-                    setQuickQuizQuestions((prev) => prev.map((item, i) => (i === idx ? { ...item, question_text: v } : item)))
-                  }
-                />
-                <Field
-                  label="Type (multiple_choice | true_false | essay)"
-                  value={q.question_type}
-                  onChangeText={(v) =>
-                    setQuickQuizQuestions((prev) => prev.map((item, i) => (i === idx ? { ...item, question_type: v } : item)))
-                  }
-                />
-                <Field
-                  label="Points"
-                  value={String(q.points)}
-                  keyboardType="numeric"
-                  onChangeText={(v) =>
-                    setQuickQuizQuestions((prev) => prev.map((item, i) => (i === idx ? { ...item, points: Number(v || 1) } : item)))
-                  }
-                />
-                {q.question_type !== 'essay' && (
-                  <View style={{ gap: 8 }}>
-                    {q.choices.map((c: any, cIdx: number) => (
-                      <View key={`q-${idx}-c-${cIdx}`} style={styles.choiceEditRow}>
-                        <TextInput
-                          style={[styles.fieldInput, { flex: 1 }]}
-                          value={c.choice_text}
-                          onChangeText={(v) =>
-                            setQuickQuizQuestions((prev) =>
-                              prev.map((item, i) =>
-                                i !== idx
-                                  ? item
-                                  : {
-                                      ...item,
-                                      choices: item.choices.map((cc: any, j: number) =>
-                                        j === cIdx ? { ...cc, choice_text: v } : cc,
-                                      ),
-                                    },
-                              ),
-                            )
-                          }
-                          placeholder={`Choice ${cIdx + 1}`}
-                          placeholderTextColor="#9CA3AF"
-                        />
-                        <TouchableOpacity
-                          style={[styles.inlineBtn, c.is_correct && { backgroundColor: '#2E7D32' }]}
-                          onPress={() =>
-                            setQuickQuizQuestions((prev) =>
-                              prev.map((item, i) =>
-                                i !== idx
-                                  ? item
-                                  : {
-                                      ...item,
-                                      choices: item.choices.map((cc: any, j: number) => ({ ...cc, is_correct: j === cIdx })),
-                                    },
-                              ),
-                            )
-                          }
-                        >
-                          <Text style={styles.inlineBtnText}>{c.is_correct ? 'Correct' : 'Set Correct'}</Text>
-                        </TouchableOpacity>
-                      </View>
-                    ))}
-                  </View>
-                )}
-              </View>
-            ))}
-            <TouchableOpacity style={[styles.inlineBtn, { marginTop: 6 }]} onPress={addQuickQuestion}>
-              <Text style={styles.inlineBtnText}>Add Question</Text>
-            </TouchableOpacity>
-          </ScrollView>
-        </KeyboardAvoidingView>
-      </Modal>
+      <QuickQuizBuilderModal
+        visible={quickQuizBuilderVisible}
+        onClose={() => setQuickQuizBuilderVisible(false)}
+        onCreate={async (quizData) => {
+          if (!id) return;
+          setCreatingQuickQuiz(true);
+          try {
+            const payloadQuestions = quizData.questions
+              .filter((q) => q.question_text.trim())
+              .map((q, idx) => ({
+                question_text: q.question_text.trim(),
+                question_type: q.question_type,
+                points: Number(q.points || 1),
+                sort_order: idx,
+                choices: q.question_type === 'essay'
+                  ? []
+                  : (q.choices || []).map((c, cIdx) => ({
+                      choice_text: c.choice_text,
+                      is_correct: !!c.is_correct,
+                      sort_order: cIdx,
+                    })),
+              }));
+
+            if (quizData.open_at && quizData.close_at && quizData.close_at <= quizData.open_at) {
+              Alert.alert('Invalid Dates', 'Close date/time must be after open date/time.');
+              return;
+            }
+
+            await api.post('/quizzes/quick-create/', {
+              course_section_id: id,
+              title: quizData.title,
+              weekly_module_id: quizData.weekly_module_id,
+              instructions: quizData.instructions || null,
+              attempt_limit: quizData.attempt_limit,
+              time_limit_minutes: quizData.time_limit_minutes,
+              open_at: quizData.open_at ? quizData.open_at.toISOString() : null,
+              close_at: quizData.close_at ? quizData.close_at.toISOString() : null,
+              questions: payloadQuestions,
+              is_published: true,
+              show_results: true,
+            });
+            setQuickQuizBuilderVisible(false);
+            await fetchData();
+            Alert.alert('Success', 'Quiz created.');
+          } catch (e: any) {
+            Alert.alert('Error', e.message || 'Could not create quick quiz.');
+          } finally {
+            setCreatingQuickQuiz(false);
+          }
+        }}
+        modules={modules}
+        isCreating={creatingQuickQuiz}
+      />
 
       <DocumentViewerModal
         visible={docViewerVisible}
@@ -3530,27 +3300,6 @@ export function CourseScreen() {
         hasTime={quizCloseHasTime}
       />
 
-      <DateTimePickerModal
-        visible={quickQuizOpenPickerVisible}
-        value={quickQuizOpenAt}
-        onChange={(date) => {
-          setQuickQuizOpenAt(date);
-          setQuickQuizOpenHasTime(true);
-        }}
-        onClose={() => setQuickQuizOpenPickerVisible(false)}
-        hasTime={quickQuizOpenHasTime}
-      />
-
-      <DateTimePickerModal
-        visible={quickQuizClosePickerVisible}
-        value={quickQuizCloseAt}
-        onChange={(date) => {
-          setQuickQuizCloseAt(date);
-          setQuickQuizCloseHasTime(true);
-        }}
-        onClose={() => setQuickQuizClosePickerVisible(false)}
-        hasTime={quickQuizCloseHasTime}
-      />
 
       {/* Roll Call Date Picker */}
       <DateTimePickerModal
