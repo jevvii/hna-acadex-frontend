@@ -46,8 +46,22 @@
         {
           "iCloudContainerEnvironment": "Production"
         }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#1A3A6B",
+          "sounds": []
+        }
       ]
     ],
+    "notification": {
+      "icon": "./assets/notification-icon.png",
+      "color": "#1A3A6B",
+      "androidMode": "default",
+      "androidCollapsedId": "hna-acadex-notification"
+    },
     "scheme": "hna-acadex",
     "experiments": {
       "typedRoutes": true

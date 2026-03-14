@@ -3,16 +3,21 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '@/contexts/ThemeContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { Colors } from '@/constants/colors';
 import { Platform, View, Text, StyleSheet } from 'react-native';
 import { api } from '@/lib/api';
 
 export default function TabsLayout() {
   const { colors } = useTheme();
+  const { user } = useAuth();
   const [todoPendingCount, setTodoPendingCount] = useState(0);
   const [notifUnreadCount, setNotifUnreadCount] = useState(0);
 
   const refreshBadges = useCallback(async () => {
+    // Only fetch if user is authenticated
+    if (!user) return;
+
     try {
       const [todosData, notifData] = await Promise.all([
         api.get('/todos/'),
@@ -25,7 +30,7 @@ export default function TabsLayout() {
     } catch {
       // Ignore badge refresh errors.
     }
-  }, []);
+  }, [user]);
 
   useEffect(() => {
     refreshBadges();

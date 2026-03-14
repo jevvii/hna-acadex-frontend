@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "152560145706",
+    "project_id": "hna-acadex",
+    "storage_bucket": "hna-acadex.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:152560145706:android:011a879b676259f574fa53",
+        "android_client_info": {
+          "package_name": "ph.edu.hna.acadex"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBYiRyzhJInYtzl_BnArWX6Ig3lF64Sdn8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

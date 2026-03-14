@@ -2,7 +2,7 @@
 // Activity details screen with canvas-style design
 // Supports three states: not-submitted, submitted, graded
 
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import {
   View,
   Text,
@@ -12,15 +12,17 @@ import {
   SafeAreaView,
   Platform,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '@/contexts/ThemeContext';
-import { Activity, SubmissionStatus, ActivityStatus } from '@/types';
+import { Activity, ActivityStatus } from '@/types';
 import { Colors, Spacing, Radius, Shadows } from '@/constants/colors';
 import { CircularScore } from '@/components/shared/CircularScore';
 import { ReminderPickerDialog, ReminderValue } from '@/components/shared/ReminderPickerDialog';
 import { useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
 import { formatDate } from './utils';
+import { reminderApi, Reminder, formatOffsetLabel } from '@/services/reminders';
 
 // Submission type icons - using valid Ionicons names
 const submissionTypes = [
@@ -57,15 +59,34 @@ export function ActivityDetailsScreen({
   const { colors } = useTheme();
   const router = useRouter();
   const navigation = useNavigation();
-  const params = useLocalSearchParams<{ activityId?: string; courseId?: string }>();
 
   // In a real app, you would fetch the activity from API using activityId
   // For now, we use the prop or a placeholder
   const activity = propActivity;
 
-  // Reminder state
-  const [reminders, setReminders] = useState<ReminderValue[]>([]);
+  // Reminder state - fetch from API
+  const [reminders, setReminders] = useState<Reminder[]>([]);
+  const [remindersLoading, setRemindersLoading] = useState(false);
   const [reminderPickerVisible, setReminderPickerVisible] = useState(false);
+
+  // Fetch reminders for this activity
+  const fetchReminders = useCallback(async () => {
+    if (!activity?.id) return;
+
+    setRemindersLoading(true);
+    try {
+      const activityReminders = await reminderApi.getByActivity(activity.id);
+      setReminders(activityReminders.filter(r => !r.notification_sent));
+    } catch (error) {
+      console.error('Failed to fetch reminders:', error);
+    } finally {
+      setRemindersLoading(false);
+    }
+  }, [activity?.id]);
+
+  useEffect(() => {
+    fetchReminders();
+  }, [fetchReminders]);
 
   // Derive status from submission data
   const status = useMemo(() => {
@@ -79,37 +100,47 @@ export function ActivityDetailsScreen({
   // Get submission data
   const submission = activity?.my_submission;
 
-  
+  const handleAddReminder = useCallback(async (reminderValue: ReminderValue) => {
+    if (!activity?.id) return;
 
-  const handleAddReminder = useCallback((reminder: ReminderValue) => {
-    setReminders((prev) => {
-      // Avoid duplicates
-      if (prev.some((r) => r.id === reminder.id)) return prev;
-      return [...prev, reminder];
-    });
-  }, []);
+    try {
+      const reminderData = {
+        reminder_type: 'activity' as const,
+        activity_id: activity.id,
+        reminder_datetime: reminderValue.reminderDate.toISOString(),
+        offset_minutes: reminderValue.value === 0 ? 0 : reminderValue.value,
+      };
 
-  const handleRemoveReminder = useCallback((reminderId: string) => {
-    setReminders((prev) => prev.filter((r) => r.id !== reminderId));
-  }, []);
-
-  const formatReminderLabel = useCallback((reminder: ReminderValue) => {
-    // Calculate the actual reminder time based on the activity's due date
-    if (reminder.reminderDate) {
-      // If we have a calculated reminder date, display it
-      return formatDate(reminder.reminderDate.toISOString());
+      const newReminder = await reminderApi.create(reminderData);
+      if (newReminder) {
+        setReminders((prev) => [...prev, newReminder]);
+      }
+    } catch (error) {
+      console.error('Failed to create reminder:', error);
+      Alert.alert('Error', 'Failed to create reminder. Please try again.');
     }
+  }, [activity?.id]);
 
-    // Fallback: construct label from value/unit
-    const unitLabels: Record<string, string> = {
-      minutes: 'Minute',
-      hours: 'Hour',
-      days: 'Day',
-      weeks: 'Week',
-    };
-    const unitLabel = unitLabels[reminder.unit] || 'Minute';
-    const pluralLabel = reminder.value === 1 ? unitLabel : `${unitLabel}s`;
-    return `${reminder.value} ${pluralLabel} Before`;
+  const handleRemoveReminder = useCallback(async (reminderId: string) => {
+    try {
+      const success = await reminderApi.delete(reminderId);
+      if (success) {
+        setReminders((prev) => prev.filter((r) => r.id !== reminderId));
+      }
+    } catch (error) {
+      console.error('Failed to delete reminder:', error);
+      Alert.alert('Error', 'Failed to remove reminder. Please try again.');
+    }
+  }, []);
+
+  const formatReminderLabel = useCallback((reminder: Reminder) => {
+    // Format the reminder datetime for display
+    if (reminder.reminder_datetime) {
+      const date = new Date(reminder.reminder_datetime);
+      return formatDate(date.toISOString());
+    }
+    // Fallback to offset label
+    return formatOffsetLabel(reminder.offset_minutes);
   }, []);
 
   const handleBack = useCallback(() => {
@@ -173,7 +204,6 @@ export function ActivityDetailsScreen({
 
   const renderStatusBadge = () => {
     if (isGraded) {
-      const score = submission?.score;
       return (
         <View style={styles.statusRow}>
           <Text style={[styles.pointsText, { color: colors.textPrimary }]}>
@@ -363,7 +393,11 @@ export function ActivityDetailsScreen({
           )}
 
           {/* Reminders */}
-          {reminders.length > 0 && (
+          {remindersLoading ? (
+            <View style={styles.infoItem}>
+              <ActivityIndicator size="small" color={Colors.primary} />
+            </View>
+          ) : reminders.length > 0 && (
             <View style={styles.infoItem}>
               <Text style={[styles.infoLabel, { color: colors.mutedForeground }]}>REMINDERS</Text>
               <View style={styles.remindersList}>
@@ -681,11 +715,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-  },
-  actionCardLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.sm,
   },
   actionCardText: {
     fontSize: 15,
