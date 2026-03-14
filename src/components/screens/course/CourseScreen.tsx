@@ -3963,7 +3963,7 @@ const styles = StyleSheet.create({
   inlineBtn: {
     backgroundColor: Colors.primary,
     borderRadius: Radius.md,
-    paddingHorizontal: 10,
+    paddingHorizontal: 20,
     paddingVertical: 8,
     alignSelf: 'flex-start',
   },
