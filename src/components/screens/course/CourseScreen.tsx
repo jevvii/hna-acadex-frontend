@@ -16,9 +16,14 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useTheme } from '@/contexts/ThemeContext';
 import { api, API_BASE_URL } from '@/lib/api';
 import { DateTimePicker } from '@/components/shared/DateTimePicker';
+import { DateTimePickerModal } from '@/components/shared/DateTimePickerModal';
 import { DocumentViewerModal } from '@/components/shared/DocumentViewerModal';
+import { RichTextInput } from '@/components/shared/RichTextInput';
+import { FormattedText } from '@/components/shared/FormattedText';
+import { ActivityDetailsScreen } from '@/screens/course/ActivityDetailsScreen';
+import { ActivitySubmissionScreen } from '@/screens/course/ActivitySubmissionScreen';
 import { WeeklyModule, Activity, CourseFile, Announcement, Quiz, AttendanceStatus } from '@/types';
-import { Colors, Spacing, Radius, Shadows } from '@/constants/colors';
+import { Colors, Spacing, Radius, Shadows, Typography } from '@/constants/colors';
 
 type CourseTab = 'modules' | 'assignments' | 'files' | 'announcements' | 'quizzes' | 'attendance' | 'grades';
 
@@ -38,6 +43,8 @@ type FormState = {
   instructions: string;
   attempt_limit: string;
   time_limit_minutes: string;
+  activity_attempt_limit: string;
+  score_selection_policy: 'latest' | 'highest';
 };
 
 type QuizActionVariant = 'start' | 'resume' | 'retry' | 'result' | 'closed';
@@ -99,6 +106,8 @@ const EMPTY_FORM: FormState = {
   instructions: '',
   attempt_limit: '1',
   time_limit_minutes: '',
+  activity_attempt_limit: '1',
+  score_selection_policy: 'highest',
 };
 
 const QUIZ_ACTION_STYLES: Record<
@@ -390,11 +399,21 @@ export function CourseScreen() {
   const [quizCloseAtDate, setQuizCloseAtDate] = useState(new Date());
   const [quizCloseHasTime, setQuizCloseHasTime] = useState(true);
 
+  // Date/Time picker modal state
+  const [deadlinePickerVisible, setDeadlinePickerVisible] = useState(false);
+  const [quizOpenPickerVisible, setQuizOpenPickerVisible] = useState(false);
+  const [quizClosePickerVisible, setQuizClosePickerVisible] = useState(false);
+
+  // Score selection policy state for quiz editing (separate from form state)
+  const [quizScorePolicy, setQuizScorePolicy] = useState<'latest' | 'highest'>('highest');
+
   const [submissionModalVisible, setSubmissionModalVisible] = useState(false);
   const [submissionText, setSubmissionText] = useState('');
   const [selectedActivity, setSelectedActivity] = useState<Activity | null>(null);
   const [submittingActivity, setSubmittingActivity] = useState(false);
   const [activityDetailVisible, setActivityDetailVisible] = useState(false);
+  const [activitySubmissionVisible, setActivitySubmissionVisible] = useState(false);
+  const [submissionDetailVisible, setSubmissionDetailVisible] = useState(false);
   const [selectedSubmissionFiles, setSelectedSubmissionFiles] = useState<Array<{ uri: string; name: string; mimeType: string; size?: number }>>([]);
   const [selectedCourseMaterialFile, setSelectedCourseMaterialFile] = useState<{ uri: string; name: string; mimeType: string; size?: number } | null>(null);
   const [submissionInlineError, setSubmissionInlineError] = useState<string | null>(null);
@@ -917,6 +936,8 @@ export function CourseScreen() {
         description: a.description || '',
         points: String(a.points || 100),
         allowed_file_types: (a as any).allowed_file_types || ['all'],
+        activity_attempt_limit: String((a as any).attempt_limit || 1),
+        score_selection_policy: ((a as any).score_selection_policy || 'highest') as 'highest' | 'latest',
       });
       setSelectedWeeklyModuleId(a.weekly_module_id || null);
       if (a.deadline) {
@@ -941,7 +962,9 @@ export function CourseScreen() {
         instructions: q.instructions || '',
         attempt_limit: String(q.attempt_limit || 1),
         time_limit_minutes: q.time_limit_minutes ? String(q.time_limit_minutes) : '',
+        score_selection_policy: ((q as any).score_selection_policy || 'highest') as 'highest' | 'latest',
       });
+      setQuizScorePolicy(((q as any).score_selection_policy || 'highest') as 'highest' | 'latest');
       setSelectedWeeklyModuleId(q.weekly_module_id || null);
       if (q.open_at) {
         setHasQuizOpenAt(true);
@@ -979,6 +1002,8 @@ export function CourseScreen() {
         deadline: hasDeadline ? deadlineDate.toISOString() : null,
         weekly_module_id: selectedWeeklyModuleId,
         allowed_file_types: form.allowed_file_types,
+        attempt_limit: Number(form.activity_attempt_limit || '1'),
+        score_selection_policy: form.score_selection_policy,
       };
     }
     if (activeTab === 'files') {
@@ -1005,6 +1030,7 @@ export function CourseScreen() {
       instructions: form.instructions.trim() || null,
       attempt_limit: Number(form.attempt_limit || '1'),
       time_limit_minutes: form.time_limit_minutes.trim() ? Number(form.time_limit_minutes) : null,
+      score_selection_policy: form.score_selection_policy,
       open_at: hasQuizOpenAt ? quizOpenAtDate.toISOString() : null,
       close_at: hasQuizCloseAt ? quizCloseAtDate.toISOString() : null,
       weekly_module_id: selectedWeeklyModuleId,
@@ -1757,7 +1783,7 @@ export function CourseScreen() {
             )}
             {activities.length === 0 ? <EmptyState icon="📝" title="No assignments yet" /> :
             activities.map((act) => (
-              <TouchableOpacity
+              <View
                 key={act.id}
                 style={[
                   styles.actCard,
@@ -1765,30 +1791,35 @@ export function CourseScreen() {
                   !canManage && !!act.deadline && new Date(act.deadline) < new Date() && !act.my_submission && styles.missingCard,
                   Shadows.sm,
                 ]}
-                activeOpacity={0.9}
-                onPress={() => openActivityDetail(act)}
               >
-                <View style={styles.actHeader}>
-                  <Ionicons name="document-text-outline" size={20} color={Colors.primaryLight} />
-                  <View style={styles.actInfo}>
-                    <Text
-                      style={[
-                        styles.actTitle,
-                        { color: colors.textPrimary },
-                        !canManage && !!act.deadline && new Date(act.deadline) < new Date() && !act.my_submission && styles.missingTitle,
-                      ]}
-                    >
-                      {act.title}
-                    </Text>
-                    {!!act.deadline && <Text style={[styles.actDeadline, { color: new Date(act.deadline) < new Date() ? Colors.accentRed : colors.textSecondary }]}>Due: {formatDate(act.deadline)}</Text>}
+                <TouchableOpacity
+                  activeOpacity={0.9}
+                  onPress={() => openActivityDetail(act)}
+                  disabled={canManage}
+                  style={styles.actCardTouchable}
+                >
+                  <View style={styles.actHeader}>
+                    <Ionicons name="document-text-outline" size={20} color={Colors.primaryLight} />
+                    <View style={styles.actInfo}>
+                      <Text
+                        style={[
+                          styles.actTitle,
+                          { color: colors.textPrimary },
+                          !canManage && !!act.deadline && new Date(act.deadline) < new Date() && !act.my_submission && styles.missingTitle,
+                        ]}
+                      >
+                        {act.title}
+                      </Text>
+                      {!!act.deadline && <Text style={[styles.actDeadline, { color: new Date(act.deadline) < new Date() ? Colors.accentRed : colors.textSecondary }]}>Due: {formatDate(act.deadline)}</Text>}
+                    </View>
+                    <View style={styles.pointsBadge}><Text style={styles.pointsText}>{act.points}pts</Text></View>
                   </View>
-                  <View style={styles.pointsBadge}><Text style={styles.pointsText}>{act.points}pts</Text></View>
-                </View>
-                {!canManage && !!act.deadline && new Date(act.deadline) < new Date() && !act.my_submission && (
-                  <View style={styles.missingBadge}><Text style={styles.missingBadgeText}>Missing</Text></View>
-                )}
-                <Text style={[styles.topicBadge, { color: colors.textSecondary }]}>{weekLabel(act.weekly_module_id)}</Text>
-                {!!act.description && <Text style={[styles.actDesc, { color: colors.textSecondary }]} numberOfLines={2}>{act.description}</Text>}
+                  {!canManage && !!act.deadline && new Date(act.deadline) < new Date() && !act.my_submission && (
+                    <View style={styles.missingBadge}><Text style={styles.missingBadgeText}>Missing</Text></View>
+                  )}
+                  <Text style={[styles.topicBadge, { color: colors.textSecondary }]}>{weekLabel(act.weekly_module_id)}</Text>
+                  {!!act.description && <Text style={[styles.actDesc, { color: colors.textSecondary }]} numberOfLines={2}>{act.description}</Text>}
+                </TouchableOpacity>
                 {!canManage && (
                   <View style={styles.studentActionRow}>
                     {act.my_submission?.score != null ? (
@@ -1807,7 +1838,7 @@ export function CourseScreen() {
                   </TouchableOpacity>
                 )}
                 {canManage && <ItemActions onEdit={() => openEdit(act)} onDelete={() => deleteItem(act.id)} />}
-              </TouchableOpacity>
+              </View>
             ))}
             </>
           )}
@@ -2057,7 +2088,7 @@ export function CourseScreen() {
 
           <ScrollView contentContainerStyle={styles.modalBody} keyboardShouldPersistTaps="handled">
             {(activeTab === 'modules' || activeTab === 'assignments' || activeTab === 'announcements' || activeTab === 'quizzes') && (
-              <Field label="Title" value={form.title} onChangeText={(v) => setForm((p) => ({ ...p, title: v }))} />
+              <Field label="Title" value={form.title} onChangeText={(v) => setForm((p) => ({ ...p, title: v }))} headerLabel />
             )}
 
             {(activeTab === 'assignments' || activeTab === 'quizzes' || activeTab === 'files') && (
@@ -2093,8 +2124,26 @@ export function CourseScreen() {
 
             {activeTab === 'assignments' && (
               <>
-                <Field label="Description" value={form.description} multiline onChangeText={(v) => setForm((p) => ({ ...p, description: v }))} />
+                <RichTextInput label="Description" value={form.description} onChangeText={(v) => setForm((p) => ({ ...p, description: v }))} headerStyle />
                 <Field label="Points" value={form.points} keyboardType="numeric" onChangeText={(v) => setForm((p) => ({ ...p, points: v }))} />
+                <Field label="Attempts Allowed" value={form.activity_attempt_limit} keyboardType="numeric" onChangeText={(v) => setForm((p) => ({ ...p, activity_attempt_limit: v }))} />
+                <View style={styles.fieldWrap}>
+                  <Text style={styles.fieldLabel}>Score Selection</Text>
+                  <View style={styles.typeRow}>
+                    {['highest', 'latest'].map((policy) => {
+                      const active = form.score_selection_policy === policy;
+                      return (
+                        <TouchableOpacity
+                          key={policy}
+                          style={[styles.topicChip, active && styles.topicChipActive]}
+                          onPress={() => setForm((p) => ({ ...p, score_selection_policy: policy as 'highest' | 'latest' }))}
+                        >
+                          <Text style={[styles.topicChipText, active && styles.topicChipTextActive]}>{policy.charAt(0).toUpperCase() + policy.slice(1)}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </View>
                 <View style={styles.fieldWrap}>
                   <Text style={styles.fieldLabel}>Accepted Submission Types</Text>
                   <View style={styles.typeRow}>
@@ -2121,17 +2170,29 @@ export function CourseScreen() {
                     })}
                   </View>
                 </View>
-                <ToggleRow label="Set Deadline" value={hasDeadline} onToggle={() => setHasDeadline((p) => !p)} />
+                <ToggleRow
+                  label="Set Deadline"
+                  value={hasDeadline}
+                  onToggle={() => {
+                    const newValue = !hasDeadline;
+                    setHasDeadline(newValue);
+                    if (newValue) {
+                      // Open date picker immediately when toggled ON
+                      setDeadlinePickerVisible(true);
+                    }
+                  }}
+                />
                 {hasDeadline && (
-                  <View style={styles.datePickerWrap}>
-                    <DateTimePicker
-                      value={deadlineDate}
-                      hasTime={deadlineHasTime}
-                      onToggleTime={setDeadlineHasTime}
-                      onChange={setDeadlineDate}
-                    />
-                    <Text style={styles.dateHint}>Due {formatDate(deadlineDate.toISOString())}</Text>
-                  </View>
+                  <TouchableOpacity
+                    style={styles.datePickerButton}
+                    onPress={() => setDeadlinePickerVisible(true)}
+                  >
+                    <Ionicons name="calendar-outline" size={20} color={Colors.primary} />
+                    <Text style={styles.datePickerButtonText}>
+                      {formatDate(deadlineDate.toISOString())}
+                    </Text>
+                    <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
+                  </TouchableOpacity>
                 )}
               </>
             )}
@@ -2176,32 +2237,51 @@ export function CourseScreen() {
 
             {activeTab === 'quizzes' && (
               <>
-                <Field label="Instructions" value={form.instructions} multiline onChangeText={(v) => setForm((p) => ({ ...p, instructions: v }))} />
+                <RichTextInput label="Instructions" value={form.instructions} onChangeText={(v) => setForm((p) => ({ ...p, instructions: v }))} headerStyle />
                 <Field label="Attempt Limit" value={form.attempt_limit} keyboardType="numeric" onChangeText={(v) => setForm((p) => ({ ...p, attempt_limit: v }))} />
                 <Field label="Time Limit Minutes" value={form.time_limit_minutes} keyboardType="numeric" onChangeText={(v) => setForm((p) => ({ ...p, time_limit_minutes: v }))} />
+                <View style={styles.fieldWrap}>
+                  <Text style={styles.fieldLabel}>Score Selection</Text>
+                  <View style={styles.typeRow}>
+                    {['highest', 'latest'].map((policy) => {
+                      const active = quizScorePolicy === policy;
+                      return (
+                        <TouchableOpacity
+                          key={policy}
+                          style={[styles.topicChip, active && styles.topicChipActive]}
+                          onPress={() => setQuizScorePolicy(policy as 'highest' | 'latest')}
+                        >
+                          <Text style={[styles.topicChipText, active && styles.topicChipTextActive]}>{policy.charAt(0).toUpperCase() + policy.slice(1)}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </View>
                 <ToggleRow label="Set Open Date" value={hasQuizOpenAt} onToggle={() => setHasQuizOpenAt((p) => !p)} />
                 {hasQuizOpenAt && (
-                  <View style={styles.datePickerWrap}>
-                    <DateTimePicker
-                      value={quizOpenAtDate}
-                      hasTime={quizOpenHasTime}
-                      onToggleTime={setQuizOpenHasTime}
-                      onChange={setQuizOpenAtDate}
-                    />
-                    <Text style={styles.dateHint}>Opens {formatDate(quizOpenAtDate.toISOString())}</Text>
-                  </View>
+                  <TouchableOpacity
+                    style={styles.datePickerButton}
+                    onPress={() => setQuizOpenPickerVisible(true)}
+                  >
+                    <Ionicons name="calendar-outline" size={20} color={Colors.primary} />
+                    <Text style={styles.datePickerButtonText}>
+                      Opens: {formatDate(quizOpenAtDate.toISOString())}
+                    </Text>
+                    <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
+                  </TouchableOpacity>
                 )}
                 <ToggleRow label="Set Close Date" value={hasQuizCloseAt} onToggle={() => setHasQuizCloseAt((p) => !p)} />
                 {hasQuizCloseAt && (
-                  <View style={styles.datePickerWrap}>
-                    <DateTimePicker
-                      value={quizCloseAtDate}
-                      hasTime={quizCloseHasTime}
-                      onToggleTime={setQuizCloseHasTime}
-                      onChange={setQuizCloseAtDate}
-                    />
-                    <Text style={styles.dateHint}>Closes {formatDate(quizCloseAtDate.toISOString())}</Text>
-                  </View>
+                  <TouchableOpacity
+                    style={styles.datePickerButton}
+                    onPress={() => setQuizClosePickerVisible(true)}
+                  >
+                    <Ionicons name="calendar-outline" size={20} color={Colors.primary} />
+                    <Text style={styles.datePickerButtonText}>
+                      Closes: {formatDate(quizCloseAtDate.toISOString())}
+                    </Text>
+                    <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
+                  </TouchableOpacity>
                 )}
               </>
             )}
@@ -2235,9 +2315,7 @@ export function CourseScreen() {
             {!!selectedActivity && (
               <View style={styles.detailCard}>
                 <Text style={styles.detailCardTitle}>Assignment Details</Text>
-                <Text style={styles.detailCardBody}>
-                  {selectedActivity.instructions || selectedActivity.description || 'No instructions.'}
-                </Text>
+                <FormattedText text={selectedActivity.instructions || selectedActivity.description || 'No instructions.'} style={styles.detailCardBody} />
               </View>
             )}
 
@@ -2401,56 +2479,26 @@ export function CourseScreen() {
       </Modal>
 
       <Modal visible={activityDetailVisible} animationType="slide" onRequestClose={() => setActivityDetailVisible(false)}>
-        <View style={[styles.modalWrap, { backgroundColor: colors.background }]}>
-          <View style={[styles.modalHeader, { borderBottomColor: colors.border, backgroundColor: colors.surface }]}>
-            <TouchableOpacity onPress={() => setActivityDetailVisible(false)}><Text style={[styles.modalCancel, { color: colors.textSecondary }]}>Close</Text></TouchableOpacity>
-            <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Activity Details</Text>
-            <View style={{ width: 48 }} />
-          </View>
-          <ScrollView contentContainerStyle={styles.modalBody}>
-            {!!selectedActivity && (
-              <>
-                <LinearGradient colors={['#0B3A8A', '#1F5FBF']} style={styles.detailHeroCard}>
-                  <Text style={styles.detailHeroTitle}>{selectedActivity.title}</Text>
-                  <View style={styles.detailHeroMetaRow}>
-                    <Text style={styles.detailHeroMetaBadge}>{submissionStatusLabel(selectedActivity)}</Text>
-                    <Text style={styles.detailHeroMetaBadge}>{acceptedTypesLabel(selectedActivity)}</Text>
-                  </View>
-                  <View style={styles.detailHeroMetaRow}>
-                    <Text style={styles.detailHeroMetaText}>Points: {selectedActivity.points}</Text>
-                    <Text style={styles.detailHeroMetaText}>
-                      Due: {selectedActivity.deadline ? formatDate(selectedActivity.deadline) : 'No due date'}
-                    </Text>
-                  </View>
-                </LinearGradient>
+        {!!selectedActivity && (
+          <ActivityDetailsScreen
+            activity={selectedActivity}
+            onClose={() => setActivityDetailVisible(false)}
+            onSubmit={() => {
+              setActivityDetailVisible(false);
+              openSubmissionModal(selectedActivity);
+            }}
+            onViewSubmission={() => setActivitySubmissionVisible(true)}
+          />
+        )}
+      </Modal>
 
-                <View style={styles.detailCard}>
-                  <Text style={styles.detailCardTitle}>Instructions</Text>
-                  <Text style={styles.detailCardBody}>{selectedActivity.instructions || selectedActivity.description || 'No instructions.'}</Text>
-                </View>
-
-                {selectedActivity.my_submission?.score != null && (
-                  <View style={styles.detailCard}>
-                    <Text style={styles.detailCardTitle}>Performance</Text>
-                    <View style={styles.quizInfoScoreCard}>
-                    <ScoreRing score={selectedActivity.my_submission.score} maxScore={selectedActivity.points} size={110} />
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.previewLabel}>Class range</Text>
-                      <Text style={styles.previewValue}>Lowest: {selectedActivity.class_stats?.lowest_score ?? '-'}</Text>
-                      <Text style={styles.previewValue}>Highest: {selectedActivity.class_stats?.highest_score ?? '-'}</Text>
-                    </View>
-                  </View>
-                  </View>
-                )}
-                {!canManage && (
-                  <TouchableOpacity style={styles.primaryActionBtn} onPress={() => { setActivityDetailVisible(false); openSubmissionModal(selectedActivity); }}>
-                    <Text style={styles.primaryActionBtnText}>{selectedActivity.my_submission ? 'Update Submission' : 'Submit Activity'}</Text>
-                  </TouchableOpacity>
-                )}
-              </>
-            )}
-          </ScrollView>
-        </View>
+      <Modal visible={activitySubmissionVisible} animationType="slide" onRequestClose={() => setActivitySubmissionVisible(false)}>
+        {!!selectedActivity && (
+          <ActivitySubmissionScreen
+            activity={selectedActivity}
+            onClose={() => setActivitySubmissionVisible(false)}
+          />
+        )}
       </Modal>
 
       <Modal visible={attendanceHistoryModalVisible} animationType="slide" onRequestClose={() => setAttendanceHistoryModalVisible(false)}>
@@ -2606,7 +2654,7 @@ export function CourseScreen() {
 
                 <View style={styles.detailCard}>
                   <Text style={styles.detailCardTitle}>Instructions</Text>
-                  <Text style={styles.detailCardBody}>{selectedQuizForInfo.instructions || 'No instructions.'}</Text>
+                  <FormattedText text={selectedQuizForInfo.instructions || 'No instructions.'} style={styles.detailCardBody} />
                 </View>
                 {!!selectedQuizForInfo.my_attempt?.score && (
                   <View style={styles.detailCard}>
@@ -2837,8 +2885,8 @@ export function CourseScreen() {
             <TouchableOpacity onPress={createQuickQuiz} disabled={creatingQuickQuiz}>{creatingQuickQuiz ? <ActivityIndicator size="small" color={Colors.primary} /> : <Text style={styles.modalSave}>Create</Text>}</TouchableOpacity>
           </View>
           <ScrollView contentContainerStyle={styles.modalBody}>
-            <Field label="Quiz Title" value={quickQuizTitle} onChangeText={setQuickQuizTitle} />
-            <Field label="Instructions" value={quickQuizInstructions} multiline onChangeText={setQuickQuizInstructions} />
+            <Field label="Quiz Title" value={quickQuizTitle} headerLabel onChangeText={setQuickQuizTitle} />
+            <RichTextInput label="Instructions" value={quickQuizInstructions} onChangeText={setQuickQuizInstructions} headerStyle />
             <View style={styles.fieldWrap}>
               <Text style={styles.fieldLabel}>Week Topic</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.topicPickerRow}>
@@ -2990,6 +3038,37 @@ export function CourseScreen() {
         canAnnotate={canManage}
         onOpenOutside={(url) => Linking.openURL(url)}
       />
+
+      {/* Date/Time Picker Modals */}
+      <DateTimePickerModal
+        visible={deadlinePickerVisible}
+        value={deadlineDate}
+        onChange={(date) => setDeadlineDate(date)}
+        onClose={() => setDeadlinePickerVisible(false)}
+        hasTime={true}
+      />
+
+      <DateTimePickerModal
+        visible={quizOpenPickerVisible}
+        value={quizOpenAtDate}
+        onChange={(date) => {
+          setQuizOpenAtDate(date);
+          setQuizOpenHasTime(true);
+        }}
+        onClose={() => setQuizOpenPickerVisible(false)}
+        hasTime={quizOpenHasTime}
+      />
+
+      <DateTimePickerModal
+        visible={quizClosePickerVisible}
+        value={quizCloseAtDate}
+        onChange={(date) => {
+          setQuizCloseAtDate(date);
+          setQuizCloseHasTime(true);
+        }}
+        onClose={() => setQuizClosePickerVisible(false)}
+        hasTime={quizCloseHasTime}
+      />
     </View>
   );
 }
@@ -3001,6 +3080,7 @@ function Field({
   multiline,
   keyboardType,
   placeholder,
+  headerLabel,
 }: {
   label: string;
   value: string;
@@ -3008,10 +3088,11 @@ function Field({
   multiline?: boolean;
   keyboardType?: 'default' | 'numeric' | 'email-address';
   placeholder?: string;
+  headerLabel?: boolean;
 }) {
   return (
     <View style={styles.fieldWrap}>
-      <Text style={styles.fieldLabel}>{label}</Text>
+      <Text style={[styles.fieldLabel, headerLabel && styles.fieldLabelHeader]}>{label}</Text>
       <TextInput
         style={[styles.fieldInput, multiline && styles.fieldInputMulti]}
         value={value}
@@ -3274,6 +3355,7 @@ const styles = StyleSheet.create({
   moduleItemText: { fontSize: 13, fontWeight: '500', flex: 1 },
   noItemsText: { fontSize: 13, fontStyle: 'italic', textAlign: 'center' },
   actCard: { borderRadius: Radius.lg, padding: Spacing.lg, marginBottom: Spacing.sm },
+  actCardTouchable: { flexDirection: 'column' },
   actHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.md, marginBottom: Spacing.sm },
   actInfo: { flex: 1 },
   actTitle: { fontSize: 15, fontWeight: '600' },
@@ -3314,43 +3396,225 @@ const styles = StyleSheet.create({
   fileLink: { fontSize: 12, color: Colors.primary, marginBottom: 4, textDecorationLine: 'underline' },
   detailTitle: { fontSize: 18, fontWeight: '800', color: '#0F172A', marginBottom: 8 },
   detailHeroCard: {
-    borderRadius: Radius.lg,
+    borderRadius: Radius.xl,
     padding: Spacing.lg,
-    marginBottom: Spacing.md,
+    marginBottom: Spacing.lg,
+    marginTop: Spacing.xs,
   },
-  detailHeroTitle: { color: '#FFFFFF', fontSize: 20, fontWeight: '800', marginBottom: 8, lineHeight: 26 },
-  detailHeroMetaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 6 },
+  detailHeroTitle: { color: '#FFFFFF', fontSize: 22, fontWeight: '700', marginBottom: 12, lineHeight: 28 },
+  detailHeroMetaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 },
   detailHeroMetaBadge: {
     color: '#FFFFFF',
-    backgroundColor: 'rgba(255,255,255,0.18)',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
     borderRadius: Radius.full,
     fontSize: 12,
-    fontWeight: '700',
+    fontWeight: '600',
+    letterSpacing: 0.3,
   },
-  detailHeroMetaText: { color: '#E2E8F0', fontSize: 12, fontWeight: '600' },
+  detailHeroMetaText: { color: 'rgba(255,255,255,0.9)', fontSize: 13, fontWeight: '500' },
   detailCard: {
     borderWidth: 1,
-    borderColor: '#CBD5E1',
+    borderColor: '#E2E8F0',
     backgroundColor: '#FFFFFF',
-    borderRadius: Radius.lg,
+    borderRadius: Radius.xl,
     padding: Spacing.lg,
     marginBottom: Spacing.md,
+    ...Shadows.sm,
   },
-  detailCardTitle: { fontSize: 14, fontWeight: '800', color: '#0F172A', marginBottom: 8 },
-  detailCardBody: { fontSize: 14, color: '#334155', lineHeight: 20 },
+  detailCardTitle: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#64748B',
+    marginBottom: 12,
+    textTransform: 'uppercase' as const,
+    letterSpacing: 1,
+  },
+  detailCardBody: { fontSize: 15, color: '#1E293B', lineHeight: 24 },
+  detailSectionLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#64748B',
+    textTransform: 'uppercase' as const,
+    letterSpacing: 1,
+    marginBottom: 8,
+  },
+  detailSectionValue: {
+    fontSize: 15,
+    color: '#1E293B',
+    lineHeight: 22,
+  },
+  detailPointsBadge: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 6,
+    marginBottom: 4,
+  },
+  detailPointsText: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  statusBadgeContainer: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 8,
+    marginTop: 12,
+  },
+  statusBadgeGraded: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    backgroundColor: '#DCFCE7',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: Radius.full,
+    gap: 6,
+  },
+  statusBadgeGradedText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#166534',
+  },
+  statusBadgeSubmitted: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    backgroundColor: '#DBEAFE',
+    borderWidth: 1,
+    borderColor: '#93C5FD',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: Radius.md,
+    gap: 8,
+  },
+  statusBadgeSubmittedDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#2563EB',
+  },
+  statusBadgeSubmittedText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#1E40AF',
+  },
+  statusBadgeNotSubmitted: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    backgroundColor: '#FEF3C7',
+    borderWidth: 1,
+    borderColor: '#FCD34D',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: Radius.md,
+    gap: 8,
+  },
+  statusBadgeNotSubmittedDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#D97706',
+  },
+  statusBadgeNotSubmittedText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#92400E',
+  },
+  detailScoreCard: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    backgroundColor: '#F8FAFC',
+    borderRadius: Radius.xl,
+    padding: Spacing.lg,
+    gap: 20,
+  },
+  detailScoreInfo: {
+    flex: 1,
+  },
+  detailScoreLabel: {
+    fontSize: 12,
+    color: '#64748B',
+    marginBottom: 4,
+  },
+  detailScoreClassRange: {
+    fontSize: 13,
+    color: '#475569',
+    marginTop: 8,
+  },
   primaryActionBtn: {
     backgroundColor: Colors.primary,
     borderWidth: 1,
     borderColor: Colors.primary,
-    borderRadius: Radius.md,
-    paddingVertical: 14,
-    paddingHorizontal: 16,
+    borderRadius: Radius.xl,
+    paddingVertical: 16,
+    paddingHorizontal: 20,
     alignItems: 'center',
-    marginTop: 6,
+    marginTop: Spacing.lg,
+    marginBottom: Spacing.lg,
+    ...Shadows.card,
   },
-  primaryActionBtnText: { color: '#FFFFFF', fontSize: 14, fontWeight: '800' },
+  primaryActionBtnText: { color: '#FFFFFF', fontSize: 15, fontWeight: '700' },
+  detailModalHeader: {
+    backgroundColor: Colors.primary,
+    paddingTop: 16,
+    paddingBottom: 20,
+    paddingHorizontal: Spacing.lg,
+  },
+  detailBackBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+  },
+  detailHeaderTitle: {
+    color: '#FFFFFF',
+    fontSize: 20,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  detailHeaderSubtitle: {
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 12,
+    fontWeight: '500',
+    textTransform: 'uppercase' as const,
+    letterSpacing: 1,
+  },
+  detailScrollContent: {
+    padding: Spacing.lg,
+    paddingBottom: 40,
+  },
+  detailContentSection: {
+    marginBottom: Spacing.lg,
+  },
+  detailActivityTitle: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#0F172A',
+    marginBottom: 12,
+    lineHeight: 32,
+  },
+  gradedCheckmark: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#16A34A',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  detailTypesList: {
+    gap: 12,
+  },
+  detailTypeItem: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 12,
+  },
+  detailTypeText: {
+    fontSize: 14,
+    color: '#334155',
+  },
   fileRow: { borderRadius: Radius.lg, padding: Spacing.md, marginBottom: Spacing.sm, gap: Spacing.sm },
   fileMainRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md },
   fileIcon: { width: 44, height: 44, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center' },
@@ -3603,6 +3867,7 @@ const styles = StyleSheet.create({
   assignmentSubmitBtnText: { color: '#FFFFFF', fontSize: 13, fontWeight: '700' },
   fieldWrap: { marginBottom: Spacing.md },
   fieldLabel: { fontSize: 12, fontWeight: '700', color: '#334155', marginBottom: 6 },
+  fieldLabelHeader: { ...Typography.heading2, color: '#334155', marginBottom: Spacing.sm },
   fieldInput: {
     borderWidth: 1,
     borderColor: '#CBD5E1',
@@ -3632,6 +3897,23 @@ const styles = StyleSheet.create({
   topicChipTextActive: { color: Colors.primary, fontWeight: '700' },
   datePickerWrap: { marginBottom: Spacing.md },
   dateHint: { fontSize: 12, color: '#475569', marginTop: 4 },
+  datePickerButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: Colors.primary,
+    borderRadius: Radius.md,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    marginBottom: Spacing.md,
+  },
+  datePickerButtonText: {
+    flex: 1,
+    fontSize: 14,
+    color: Colors.primary,
+    marginHorizontal: Spacing.sm,
+  },
   toggleRow: {
     borderWidth: 1,
     borderColor: '#CBD5E1',

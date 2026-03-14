@@ -7,6 +7,20 @@ export type GradeLevel =
   | 'Grade 7' | 'Grade 8' | 'Grade 9' | 'Grade 10'
   | 'Grade 11' | 'Grade 12';
 export type SubmissionStatus = 'not_submitted' | 'submitted' | 'late' | 'graded';
+export type ScoreSelectionPolicy = 'latest' | 'highest';
+
+// Activity status for UI (matches common Canvas-style states)
+export type ActivityStatus = 'not-submitted' | 'submitted' | 'graded';
+
+// Local Attempt type for UI display (different from API Submission)
+export interface AttemptDisplay {
+  id: number;
+  date: string;
+  score?: number;
+  status: SubmissionStatus;
+  submitted_at: string;
+}
+
 export type NotificationType =
   | 'new_activity' | 'new_quiz' | 'new_exam' | 'grade_released'
   | 'course_announcement' | 'school_announcement' | 'system';
@@ -152,6 +166,8 @@ export interface Activity {
   deadline?: string;
   allowed_file_types?: string[];
   support_file_url?: string;
+  attempt_limit?: number;
+  score_selection_policy?: ScoreSelectionPolicy;
   is_published: boolean;
   created_by?: string;
   created_at: string;
@@ -163,6 +179,7 @@ export interface Activity {
     text_content?: string;
     file_urls?: string[];
     submitted_at?: string;
+    attempt_number?: number;
   } | null;
   class_stats?: {
     lowest_score?: number | null;
@@ -175,6 +192,7 @@ export interface Submission {
   id: string;
   activity_id: string;
   student_id: string;
+  attempt_number?: number;
   file_urls?: string[];
   text_content?: string;
   status: SubmissionStatus;
@@ -208,6 +226,7 @@ export interface Quiz {
   instructions?: string;
   time_limit_minutes?: number;
   attempt_limit: number;
+  score_selection_policy?: ScoreSelectionPolicy;
   open_at?: string;
   close_at?: string;
   is_published: boolean;
