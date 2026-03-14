@@ -81,3 +81,22 @@ export const Shadows = {
     elevation: 2,
   },
 };
+
+// Attendance status colors for Roll Call feature
+export const StatusColors = {
+  present: '#4CAF50',
+  presentBorder: '#388E3C',
+  presentBg: '#E8F5E9',
+  absent: '#E53935',
+  absentBorder: '#B71C1C',
+  absentBg: '#FFEBEE',
+  late: '#FFA000',
+  lateBorder: '#E65100',
+  lateBg: '#FFF3E0',
+  excused: '#888888',
+  excusedBorder: '#AAAAAA',
+  excusedBg: '#F5F5F5',
+  unmarked: '#E0E0E0',
+  unmarkedBorder: '#BDBDBD',
+  unmarkedBg: '#F2F4F7',
+};
