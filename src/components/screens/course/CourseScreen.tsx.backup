@@ -23,7 +23,7 @@ import { FormattedText } from '@/components/shared/FormattedText';
 import { ActivityDetailsScreen } from '@/screens/course/ActivityDetailsScreen';
 import { ActivitySubmissionScreen } from '@/screens/course/ActivitySubmissionScreen';
 import { WeeklyModule, Activity, CourseFile, Announcement, Quiz, AttendanceStatus } from '@/types';
-import { Colors, Spacing, Radius, Shadows, Typography } from '@/constants/colors';
+import { Colors, Spacing, Radius, Shadows, Typography, StatusColors } from '@/constants/colors';
 import {
   RollCallHeader,
   ViewToggle,
@@ -71,8 +71,8 @@ type QuizActionConfig = {
 const TABS: { key: CourseTab; label: string; icon: string }[] = [
   { key: 'modules', label: 'Modules', icon: 'layers-outline' },
   { key: 'assignments', label: 'Assignments', icon: 'document-text-outline' },
-  { key: 'attendance', label: 'Attendance', icon: 'calendar-outline' },
   { key: 'quizzes', label: 'Quizzes', icon: 'help-circle-outline' },
+  { key: 'attendance', label: 'Attendance', icon: 'calendar-outline' },
   { key: 'grades', label: 'Grades', icon: 'stats-chart-outline' },
   { key: 'files', label: 'Files', icon: 'folder-outline' },
   { key: 'announcements', label: 'Announcements', icon: 'megaphone-outline' },
@@ -1887,15 +1887,9 @@ export function CourseScreen() {
           {activeTab === 'assignments' && (
             <>
             {activities.length === 0 ? <EmptyState icon="📝" title="No assignments yet" /> : (
-              (() => {
-                const now = new Date();
-                const overdue = activities.filter(a => !!a.deadline && new Date(a.deadline) < now && !a.my_submission);
-                const upcoming = activities.filter(a => !a.deadline || (a.deadline && new Date(a.deadline) >= now) || a.my_submission);
-                const undated = activities.filter(a => !a.deadline && !a.my_submission);
-                // Remove undated from upcoming if already in upcoming
-                const upcomingFiltered = upcoming.filter(a => a.deadline);
-
-                const renderAssignmentCard = (act: Activity) => (
+              canManage ? (
+                // Teacher view - simple list
+                activities.map((act) => (
                   <View
                     key={act.id}
                     style={[
@@ -1952,31 +1946,119 @@ export function CourseScreen() {
                     )}
                     {canManage && <ItemActions onEdit={() => openEdit(act)} onDelete={() => deleteItem(act.id)} />}
                   </View>
-                );
+                ))
+              ) : (
+                // Student view - categorized accordion sections
+                (() => {
+                  const now = new Date();
+                  const overdue: Activity[] = [];
+                  const upcoming: Activity[] = [];
+                  const undated: Activity[] = [];
 
-                const renderAccordionSection = (title: string, items: Activity[], accentColor: string) => (
-                  items.length > 0 && (
-                    <View key={title} style={styles.accordionSection}>
-                      <View style={[styles.accordionHeader, { borderBottomColor: colors.border }]}>
-                        <View style={[styles.accordionAccent, { backgroundColor: accentColor }]} />
-                        <Text style={[styles.accordionTitle, { color: colors.textSecondary }]}>{title}</Text>
-                        <Text style={[styles.accordionCount, { color: colors.mutedForeground }]}>{items.length}</Text>
-                      </View>
-                      <View style={styles.accordionContent}>
-                        {items.map(renderAssignmentCard)}
+                  activities.forEach(act => {
+                    if (!act.deadline) {
+                      undated.push(act);
+                    } else if (new Date(act.deadline) < now && !act.my_submission) {
+                      overdue.push(act);
+                    } else {
+                      upcoming.push(act);
+                    }
+                  });
+
+                  const renderActivityCard = (act: Activity) => (
+                    <View
+                      key={act.id}
+                      style={[
+                        styles.actCard,
+                        { backgroundColor: colors.surface },
+                        !!act.deadline && new Date(act.deadline) < now && !act.my_submission && styles.missingCard,
+                        Shadows.sm,
+                      ]}
+                    >
+                      <TouchableOpacity
+                        activeOpacity={0.9}
+                        onPress={() => openActivityDetail(act)}
+                        style={styles.actCardTouchable}
+                      >
+                        <View style={styles.actHeader}>
+                          <Ionicons name="document-text-outline" size={20} color={Colors.primaryLight} />
+                          <View style={styles.actInfo}>
+                            <Text
+                              style={[
+                                styles.actTitle,
+                                { color: colors.textPrimary },
+                                !!act.deadline && new Date(act.deadline) < now && !act.my_submission && styles.missingTitle,
+                              ]}
+                            >
+                              {act.title}
+                            </Text>
+                            {!!act.deadline && <Text style={[styles.actDeadline, { color: new Date(act.deadline) < now ? Colors.accentRed : colors.textSecondary }]}>Due: {formatDate(act.deadline)}</Text>}
+                          </View>
+                          <View style={styles.pointsBadge}><Text style={styles.pointsText}>{act.points}pts</Text></View>
+                        </View>
+                        {!!act.deadline && new Date(act.deadline) < now && !act.my_submission && (
+                          <View style={styles.missingBadge}><Text style={styles.missingBadgeText}>Missing</Text></View>
+                        )}
+                        <Text style={[styles.topicBadge, { color: colors.textSecondary }]}>{weekLabel(act.weekly_module_id)}</Text>
+                        {!!act.description && <Text style={[styles.actDesc, { color: colors.textSecondary }]} numberOfLines={2}>{act.description}</Text>}
+                      </TouchableOpacity>
+                      <View style={styles.studentActionRow}>
+                        {act.my_submission?.score != null ? (
+                          <Text style={styles.gradePill}>Grade: {act.my_submission.score}/{act.points}</Text>
+                        ) : (
+                          <Text style={styles.pendingPill}>{act.my_submission ? 'Submitted' : 'Not submitted'}</Text>
+                        )}
+                        <TouchableOpacity style={styles.inlineBtn} onPress={() => openSubmissionModal(act)}>
+                          <Text style={styles.inlineBtnText}>{act.my_submission ? 'Update Submission' : 'Submit Activity'}</Text>
+                        </TouchableOpacity>
                       </View>
                     </View>
-                  )
-                );
+                  );
 
-                return (
-                  <>
-                    {renderAccordionSection('Overdue', overdue, Colors.accentRed)}
-                    {renderAccordionSection('Upcoming', upcomingFiltered, Colors.primary)}
-                    {renderAccordionSection('Undated', undated, colors.mutedForeground)}
-                  </>
-                );
-              })()
+                  return (
+                    <>
+                      {overdue.length > 0 && (
+                        <View style={styles.accordionSection}>
+                          <View style={styles.accordionHeader}>
+                            <View style={[styles.accordionHeaderDot, { backgroundColor: Colors.accentRed }]} />
+                            <Text style={styles.accordionHeaderText}>Overdue</Text>
+                            <Text style={styles.accordionHeaderCount}>{overdue.length}</Text>
+                          </View>
+                          <View style={styles.accordionContent}>
+                            {overdue.map(renderActivityCard)}
+                          </View>
+                        </View>
+                      )}
+
+                      {upcoming.length > 0 && (
+                        <View style={styles.accordionSection}>
+                          <View style={styles.accordionHeader}>
+                            <View style={[styles.accordionHeaderDot, { backgroundColor: Colors.primary }]} />
+                            <Text style={styles.accordionHeaderText}>Upcoming</Text>
+                            <Text style={styles.accordionHeaderCount}>{upcoming.length}</Text>
+                          </View>
+                          <View style={styles.accordionContent}>
+                            {upcoming.map(renderActivityCard)}
+                          </View>
+                        </View>
+                      )}
+
+                      {undated.length > 0 && (
+                        <View style={styles.accordionSection}>
+                          <View style={styles.accordionHeader}>
+                            <View style={[styles.accordionHeaderDot, { backgroundColor: '#6B7280' }]} />
+                            <Text style={styles.accordionHeaderText}>Undated</Text>
+                            <Text style={styles.accordionHeaderCount}>{undated.length}</Text>
+                          </View>
+                          <View style={styles.accordionContent}>
+                            {undated.map(renderActivityCard)}
+                          </View>
+                        </View>
+                      )}
+                    </>
+                  );
+                })()
+              )
             )}
             </>
           )}
@@ -2224,96 +2306,87 @@ export function CourseScreen() {
                 />
               </View>
             ) : (
-              <ScrollView style={styles.studentList} contentContainerStyle={styles.studentListContent}>
-                {/* Modern Attendance Summary Card */}
-                <View style={styles.modernAttendanceCard}>
-                  {/* Header */}
-                  <View style={styles.modernAttHeader}>
-                    <View style={styles.modernAttHeaderLeft}>
-                      <Ionicons name="checkmark-circle-outline" size={20} color={Colors.primary} />
-                      <Text style={styles.modernAttTitle}>Attendance Summary</Text>
-                    </View>
-                    <TouchableOpacity style={styles.historyBtn} onPress={() => setAttendanceHistoryModalVisible(true)}>
-                      <Ionicons name="time-outline" size={14} color={Colors.primary} />
-                      <Text style={styles.historyBtnText}>History</Text>
-                    </TouchableOpacity>
+              <View style={styles.attendanceModernCard}>
+                {/* Header Row */}
+                <View style={styles.attModernHeader}>
+                  <Text style={styles.attModernTitle}>Attendance Summary</Text>
+                  <View style={styles.attBadge}>
+                    <Text style={styles.attBadgeText}>
+                      {studentAttendanceSummary?.total_sessions || 0} Sessions
+                    </Text>
                   </View>
+                </View>
 
-                  {/* Circular Progress Section */}
-                  <View style={styles.circularProgressContainer}>
-                    <View style={styles.circleWrapper}>
-                      <Svg width={120} height={120} viewBox="0 0 120 120">
-                        {/* Background circle */}
-                        <Circle
-                          cx={60}
-                          cy={60}
-                          r={52}
-                          stroke="#E5E7EB"
-                          strokeWidth={10}
-                          fill="none"
-                        />
-                        {/* Progress circle */}
-                        <Circle
-                          cx={60}
-                          cy={60}
-                          r={52}
-                          stroke={Colors.primary}
-                          strokeWidth={10}
-                          fill="none"
-                          strokeDasharray={326.73}
-                          strokeDashoffset={326.73 - (326.73 * (studentAttendanceSummary?.attendance_percentage || 0)) / 100}
-                          strokeLinecap="round"
-                          transform="rotate(-90 60 60)"
-                        />
-                      </Svg>
-                      <View style={styles.circleCenter}>
-                        <Text style={styles.circlePercent}>{studentAttendanceSummary?.attendance_percentage || 0}%</Text>
-                        <Text style={styles.circleLabel}>Attendance</Text>
-                      </View>
-                    </View>
-                  </View>
-
-                  {/* Stats Grid */}
-                  <View style={styles.statsGrid}>
-                    <View style={styles.statItem}>
-                      <View style={[styles.statIconBg, { backgroundColor: '#22C55E20' }]}>
-                        <Ionicons name="checkmark-circle" size={18} color="#22C55E" />
-                      </View>
-                      <View style={styles.statInfo}>
-                        <Text style={styles.statValue}>{studentAttendanceSummary?.present_count || 0}</Text>
-                        <Text style={styles.statLabel}>Present</Text>
-                      </View>
-                    </View>
-                    <View style={styles.statItem}>
-                      <View style={[styles.statIconBg, { backgroundColor: '#EF444420' }]}>
-                        <Ionicons name="close-circle" size={18} color="#EF4444" />
-                      </View>
-                      <View style={styles.statInfo}>
-                        <Text style={styles.statValue}>{studentAttendanceSummary?.absent_count || 0}</Text>
-                        <Text style={styles.statLabel}>Absent</Text>
-                      </View>
-                    </View>
-                    <View style={styles.statItem}>
-                      <View style={[styles.statIconBg, { backgroundColor: '#F59E0B20' }]}>
-                        <Ionicons name="time" size={18} color="#F59E0B" />
-                      </View>
-                      <View style={styles.statInfo}>
-                        <Text style={styles.statValue}>{studentAttendanceSummary?.late_count || 0}</Text>
-                        <Text style={styles.statLabel}>Late</Text>
-                      </View>
-                    </View>
-                    <View style={styles.statItem}>
-                      <View style={[styles.statIconBg, { backgroundColor: '#8B5CF620' }]}>
-                        <Ionicons name="calendar-outline" size={18} color="#8B5CF6" />
-                      </View>
-                      <View style={styles.statInfo}>
-                        <Text style={styles.statValue}>{studentAttendanceSummary?.total_sessions || 0}</Text>
-                        <Text style={styles.statLabel}>Sessions</Text>
-                      </View>
+                {/* Circular Progress Section */}
+                <View style={styles.attCircleSection}>
+                  <View style={styles.attCircleContainer}>
+                    <Svg width={120} height={120} viewBox="0 0 120 120">
+                      {/* Background Circle */}
+                      <Circle
+                        cx={60}
+                        cy={60}
+                        r={52}
+                        stroke="#E5E7EB"
+                        strokeWidth={12}
+                        fill="transparent"
+                      />
+                      {/* Progress Circle */}
+                      <Circle
+                        cx={60}
+                        cy={60}
+                        r={52}
+                        stroke={Colors.primary}
+                        strokeWidth={12}
+                        fill="transparent"
+                        strokeDasharray={326.73}
+                        strokeDashoffset={326.73 * (1 - (studentAttendanceSummary?.attendance_percentage || 0) / 100)}
+                        strokeLinecap="round"
+                        transform="rotate(-90, 60, 60)"
+                      />
+                    </Svg>
+                    <View style={styles.attCircleCenter}>
+                      <Text style={styles.attCirclePct}>
+                        {studentAttendanceSummary?.attendance_percentage || 0}%
+                      </Text>
+                      <Text style={styles.attCircleLabel}>Overall</Text>
                     </View>
                   </View>
                 </View>
-              </ScrollView>
+
+                {/* Stats Grid */}
+                <View style={styles.attStatsGrid}>
+                  <View style={styles.attStatItem}>
+                    <View style={[styles.attStatDot, { backgroundColor: StatusColors.present }]} />
+                    <Text style={styles.attStatLabel}>Present</Text>
+                    <Text style={styles.attStatValue}>{studentAttendanceSummary?.present_count || 0}</Text>
+                  </View>
+                  <View style={styles.attStatItem}>
+                    <View style={[styles.attStatDot, { backgroundColor: StatusColors.absent }]} />
+                    <Text style={styles.attStatLabel}>Absent</Text>
+                    <Text style={styles.attStatValue}>{studentAttendanceSummary?.absent_count || 0}</Text>
+                  </View>
+                  <View style={styles.attStatItem}>
+                    <View style={[styles.attStatDot, { backgroundColor: StatusColors.late }]} />
+                    <Text style={styles.attStatLabel}>Late</Text>
+                    <Text style={styles.attStatValue}>{studentAttendanceSummary?.late_count || 0}</Text>
+                  </View>
+                  <View style={styles.attStatItem}>
+                    <View style={[styles.attStatDot, { backgroundColor: StatusColors.excused }]} />
+                    <Text style={styles.attStatLabel}>Excused</Text>
+                    <Text style={styles.attStatValue}>{studentAttendanceSummary?.excused_count || 0}</Text>
+                  </View>
+                </View>
+
+                {/* View History Button */}
+                <TouchableOpacity
+                  style={styles.attHistoryBtn}
+                  onPress={() => setAttendanceHistoryModalVisible(true)}
+                >
+                  <Ionicons name="time-outline" size={16} color={Colors.primary} />
+                  <Text style={styles.attHistoryBtnText}>View Attendance History</Text>
+                  <Ionicons name="chevron-forward" size={16} color={Colors.primary} />
+                </TouchableOpacity>
+              </View>
             )
           )}
 
@@ -2357,8 +2430,10 @@ export function CourseScreen() {
 
           {activeTab === 'quizzes' && (
             <>
-              {quizzes.length === 0 ? <EmptyState icon="❓" title="No quizzes yet" /> :
-            quizzes.map((quiz) => {
+            {quizzes.length === 0 ? <EmptyState icon="❓" title="No quizzes yet" /> : (
+              canManage ? (
+                // Teacher view - simple list
+                quizzes.map((quiz) => {
               const now = new Date();
               const isOpen = (!quiz.open_at || new Date(quiz.open_at) <= now) && (!quiz.close_at || new Date(quiz.close_at) >= now);
               const isMissing = !canManage && !!quiz.close_at && new Date(quiz.close_at) < now && ((quiz.my_attempt?.attempts_used || 0) <= 0);
@@ -3571,6 +3646,109 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
   },
   modulesAddBtnText: { color: Colors.primary, fontSize: 12, fontWeight: '700' },
+  // Modern Attendance Card Styles
+  attendanceModernCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: Radius.lg,
+    padding: Spacing.lg,
+    marginBottom: Spacing.md,
+    ...Shadows.card,
+  },
+  attModernHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: Spacing.lg,
+  },
+  attModernTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: Colors.primary,
+  },
+  attBadge: {
+    backgroundColor: Colors.primary + '15',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: Radius.full,
+  },
+  attBadgeText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Colors.primary,
+  },
+  attCircleSection: {
+    alignItems: 'center',
+    marginBottom: Spacing.lg,
+  },
+  attCircleContainer: {
+    position: 'relative',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  attCircleCenter: {
+    position: 'absolute',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  attCirclePct: {
+    fontSize: 28,
+    fontWeight: '800',
+    color: Colors.primary,
+  },
+  attCircleLabel: {
+    fontSize: 12,
+    color: '#64748B',
+    fontWeight: '500',
+    marginTop: 2,
+  },
+  attStatsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    marginBottom: Spacing.md,
+  },
+  attStatItem: {
+    width: '48%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderRadius: Radius.md,
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.md,
+    marginBottom: Spacing.sm,
+  },
+  attStatDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    marginRight: Spacing.sm,
+  },
+  attStatLabel: {
+    fontSize: 13,
+    color: '#64748B',
+    flex: 1,
+  },
+  attStatValue: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#1F2937',
+  },
+  attHistoryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.primary + '10',
+    borderRadius: Radius.md,
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.lg,
+    gap: Spacing.sm,
+  },
+  attHistoryBtnText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: Colors.primary,
+  },
+  // Legacy styles (kept for backwards compatibility)
   attendanceSummaryCard: {
     borderWidth: 1,
     borderColor: '#E0E0E0',
@@ -3585,116 +3763,6 @@ const styles = StyleSheet.create({
   attSummaryPct: { fontSize: 12, color: '#4B5563', marginBottom: 8, fontWeight: '600' },
   attSummaryStats: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 8 },
   attSummaryStat: { fontSize: 12, color: '#374151' },
-  // Modern Attendance Card Styles
-  modernAttendanceCard: {
-    marginHorizontal: Spacing.md,
-    marginTop: Spacing.md,
-    marginBottom: Spacing.sm,
-    backgroundColor: '#FFFFFF',
-    borderRadius: Radius.lg,
-    overflow: 'hidden',
-    ...Shadows.card,
-  },
-  modernAttHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: Spacing.md,
-    paddingTop: Spacing.md,
-    paddingBottom: Spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9',
-  },
-  modernAttHeaderLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  modernAttTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#1F2937',
-  },
-  historyBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: Radius.full,
-    backgroundColor: Colors.primary + '15',
-  },
-  historyBtnText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: Colors.primary,
-  },
-  circularProgressContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: Spacing.lg,
-  },
-  circleWrapper: {
-    position: 'relative',
-    width: 120,
-    height: 120,
-  },
-  circleCenter: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  circlePercent: {
-    fontSize: 28,
-    fontWeight: '800',
-    color: '#1F2937',
-  },
-  circleLabel: {
-    fontSize: 12,
-    color: '#6B7280',
-    marginTop: 2,
-  },
-  statsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    paddingHorizontal: Spacing.md,
-    paddingBottom: Spacing.md,
-    gap: 12,
-  },
-  statItem: {
-    flex: 1,
-    minWidth: '45%',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    backgroundColor: '#F8FAFC',
-    borderRadius: Radius.md,
-    padding: 12,
-  },
-  statIconBg: {
-    width: 36,
-    height: 36,
-    borderRadius: Radius.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  statInfo: {
-    flex: 1,
-  },
-  statValue: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#1F2937',
-  },
-  statLabel: {
-    fontSize: 11,
-    color: '#6B7280',
-    marginTop: 1,
-  },
   attTeacherCreateCard: {
     borderWidth: 1,
     borderColor: '#E0E0E0',
@@ -3801,6 +3869,42 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 3,
   },
+  // Accordion Section Styles (Canvas-style, always expanded)
+  accordionSection: {
+    marginBottom: Spacing.md,
+  },
+  accordionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: Spacing.xs,
+    marginBottom: Spacing.xs,
+    gap: 6,
+  },
+  accordionHeaderDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  accordionHeaderText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#4B5563',
+    letterSpacing: 0.2,
+  },
+  accordionHeaderCount: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#6B7280',
+    backgroundColor: '#F3F4F6',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: Radius.full,
+    marginLeft: 'auto',
+  },
+  accordionContent: {
+    gap: Spacing.sm,
+  },
   missingBadgeText: { color: '#B91C1C', fontSize: 11, fontWeight: '800' },
   gradesExportCard: {
     borderWidth: 1,
@@ -3906,12 +4010,6 @@ const styles = StyleSheet.create({
   moduleItemMain: { flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1, paddingRight: 8 },
   moduleItemText: { fontSize: 13, fontWeight: '500', flex: 1 },
   noItemsText: { fontSize: 13, fontStyle: 'italic', textAlign: 'center' },
-  accordionSection: { marginBottom: Spacing.md },
-  accordionHeader: { flexDirection: 'row', alignItems: 'center', paddingVertical: Spacing.sm, paddingHorizontal: Spacing.sm, marginBottom: Spacing.xs },
-  accordionAccent: { width: 3, height: 16, borderRadius: 2, marginRight: Spacing.sm },
-  accordionTitle: { fontSize: 13, fontWeight: '600', flex: 1 },
-  accordionCount: { fontSize: 12, fontWeight: '500' },
-  accordionContent: { gap: Spacing.sm },
   actCard: { borderRadius: Radius.lg, padding: Spacing.lg, marginBottom: Spacing.sm },
   actCardTouchable: { flexDirection: 'column' },
   actHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.md, marginBottom: Spacing.sm },
