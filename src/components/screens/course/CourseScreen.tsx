@@ -1935,14 +1935,14 @@ export function CourseScreen() {
                     </TouchableOpacity>
                     {!canManage && (
                       <View style={styles.studentActionRow}>
+                        <TouchableOpacity style={styles.inlineBtn} onPress={() => openActivityDetail(act)}>
+                          <Text style={styles.inlineBtnText}>Details</Text>
+                        </TouchableOpacity>
                         {act.my_submission?.score != null ? (
                           <Text style={styles.gradePill}>Grade: {act.my_submission.score}/{act.points}</Text>
                         ) : (
                           <Text style={styles.pendingPill}>{act.my_submission ? 'Submitted' : 'Not submitted'}</Text>
                         )}
-                        <TouchableOpacity style={styles.inlineBtn} onPress={() => openSubmissionModal(act)}>
-                          <Text style={styles.inlineBtnText}>{act.my_submission ? 'Update Submission' : 'Submit Activity'}</Text>
-                        </TouchableOpacity>
                       </View>
                     )}
                     {canManage && (
