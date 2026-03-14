@@ -2357,71 +2357,108 @@ export function CourseScreen() {
 
           {activeTab === 'quizzes' && (
             <>
-              {quizzes.length === 0 ? <EmptyState icon="❓" title="No quizzes yet" /> :
-            quizzes.map((quiz) => {
-              const now = new Date();
-              const isOpen = (!quiz.open_at || new Date(quiz.open_at) <= now) && (!quiz.close_at || new Date(quiz.close_at) >= now);
-              const isMissing = !canManage && !!quiz.close_at && new Date(quiz.close_at) < now && ((quiz.my_attempt?.attempts_used || 0) <= 0);
-              return (
-                <TouchableOpacity
-                  key={quiz.id}
-                  style={[styles.quizCard, { backgroundColor: colors.surface }, isMissing && styles.missingCard, Shadows.sm]}
-                  activeOpacity={0.9}
-                  onPress={() => {
-                    if (canManage) return;
-                    openQuizInfo(quiz);
-                  }}
-                >
-                  <View style={styles.quizHeader}>
-                    <View style={[styles.quizStatusDot, { backgroundColor: isOpen ? '#2E7D32' : '#9E9E9E' }]} />
-                    <Text style={[styles.quizTitle, { color: colors.textPrimary }, isMissing && styles.missingTitle]}>{quiz.title}</Text>
-                    <View style={[styles.quizBadge, { backgroundColor: isOpen ? '#2E7D3220' : colors.muted }]}><Text style={[styles.quizBadgeText, { color: isOpen ? '#2E7D32' : colors.textSecondary }]}>{isOpen ? 'Open' : 'Closed'}</Text></View>
-                  </View>
-                  {isMissing && (
-                    <View style={styles.missingBadge}><Text style={styles.missingBadgeText}>Missing</Text></View>
-                  )}
-                  <View style={styles.quizMeta}>
-                    {!!quiz.time_limit_minutes && <View style={styles.quizMetaItem}><Ionicons name="timer-outline" size={13} color={colors.textSecondary} /><Text style={[styles.quizMetaText, { color: colors.textSecondary }]}>{quiz.time_limit_minutes} min</Text></View>}
-                    <View style={styles.quizMetaItem}><Ionicons name="refresh-outline" size={13} color={colors.textSecondary} /><Text style={[styles.quizMetaText, { color: colors.textSecondary }]}>{quiz.attempt_limit} attempt{quiz.attempt_limit !== 1 ? 's' : ''}</Text></View>
-                    {!!quiz.close_at && <View style={styles.quizMetaItem}><Ionicons name="calendar-outline" size={13} color={colors.textSecondary} /><Text style={[styles.quizMetaText, { color: colors.textSecondary }]}>Closes {formatDate(quiz.close_at)}</Text></View>}
-                  </View>
-                  <Text style={[styles.topicBadge, { color: colors.textSecondary }]}>{weekLabel(quiz.weekly_module_id)}</Text>
-                  {!canManage && (
-                    <View style={styles.studentActionRow}>
-                      {(() => {
-                        const action = getQuizAction(quiz);
-                        const actionStyle = QUIZ_ACTION_STYLES[action.variant];
-                        return (
-                          <TouchableOpacity
-                            style={[
-                              styles.startQuizBtn,
-                              {
-                                backgroundColor: actionStyle.backgroundColor,
-                                borderColor: actionStyle.borderColor,
-                              },
-                              action.disabled && { opacity: 0.55 },
-                            ]}
-                            disabled={action.disabled}
-                            onPress={action.onPress}
-                          >
-                            <Text style={[styles.startQuizText, { color: actionStyle.textColor }]}>{action.label}</Text>
+              {quizzes.length === 0 ? <EmptyState icon="❓" title="No quizzes yet" /> : (
+                (() => {
+                  const now = new Date();
+                  const missing = quizzes.filter(q => !canManage && !!q.close_at && new Date(q.close_at) < now && ((q.my_attempt?.attempts_used || 0) <= 0));
+                  const open = quizzes.filter(q => {
+                    const isOpen = (!q.open_at || new Date(q.open_at) <= now) && (!q.close_at || new Date(q.close_at) >= now);
+                    return isOpen;
+                  });
+                  const closed = quizzes.filter(q => {
+                    const isClosed = q.close_at && new Date(q.close_at) < now;
+                    const hasAttempt = (q.my_attempt?.attempts_used || 0) > 0;
+                    return isClosed && hasAttempt;
+                  });
+
+                  const renderQuizCard = (quiz: Quiz) => {
+                    const isOpen = (!quiz.open_at || new Date(quiz.open_at) <= now) && (!quiz.close_at || new Date(quiz.close_at) >= now);
+                    const isMissing = !canManage && !!quiz.close_at && new Date(quiz.close_at) < now && ((quiz.my_attempt?.attempts_used || 0) <= 0);
+                    return (
+                      <TouchableOpacity
+                        key={quiz.id}
+                        style={[styles.quizCard, { backgroundColor: colors.surface }, isMissing && styles.missingCard, Shadows.sm]}
+                        activeOpacity={0.9}
+                        onPress={() => {
+                          if (canManage) return;
+                          openQuizInfo(quiz);
+                        }}
+                      >
+                        <View style={styles.quizHeader}>
+                          <View style={[styles.quizStatusDot, { backgroundColor: isOpen ? '#2E7D32' : '#9E9E9E' }]} />
+                          <Text style={[styles.quizTitle, { color: colors.textPrimary }, isMissing && styles.missingTitle]}>{quiz.title}</Text>
+                        </View>
+                        {isMissing && (
+                          <View style={styles.missingBadge}><Text style={styles.missingBadgeText}>Missing</Text></View>
+                        )}
+                        <View style={styles.quizMeta}>
+                          {!!quiz.time_limit_minutes && <View style={styles.quizMetaItem}><Ionicons name="timer-outline" size={13} color={colors.textSecondary} /><Text style={[styles.quizMetaText, { color: colors.textSecondary }]}>{quiz.time_limit_minutes} min</Text></View>}
+                          <View style={styles.quizMetaItem}><Ionicons name="refresh-outline" size={13} color={colors.textSecondary} /><Text style={[styles.quizMetaText, { color: colors.textSecondary }]}>{quiz.attempt_limit} attempt{quiz.attempt_limit !== 1 ? 's' : ''}</Text></View>
+                          {!!quiz.close_at && <View style={styles.quizMetaItem}><Ionicons name="calendar-outline" size={13} color={colors.textSecondary} /><Text style={[styles.quizMetaText, { color: colors.textSecondary }]}>Closes {formatDate(quiz.close_at)}</Text></View>}
+                        </View>
+                        <Text style={[styles.topicBadge, { color: colors.textSecondary }]}>{weekLabel(quiz.weekly_module_id)}</Text>
+                        {!canManage && (
+                          <View style={styles.studentActionRow}>
+                            {(() => {
+                              const action = getQuizAction(quiz);
+                              const actionStyle = QUIZ_ACTION_STYLES[action.variant];
+                              return (
+                                <TouchableOpacity
+                                  style={[
+                                    styles.startQuizBtn,
+                                    {
+                                      backgroundColor: actionStyle.backgroundColor,
+                                      borderColor: actionStyle.borderColor,
+                                    },
+                                    action.disabled && { opacity: 0.55 },
+                                  ]}
+                                  disabled={action.disabled}
+                                  onPress={action.onPress}
+                                >
+                                  <Text style={[styles.startQuizText, { color: actionStyle.textColor }]}>{action.label}</Text>
+                                </TouchableOpacity>
+                              );
+                            })()}
+                            <Text style={styles.pendingPill}>
+                              Attempts: {quiz.my_attempt?.attempts_used ?? 0}/{quiz.my_attempt?.attempt_limit ?? quiz.attempt_limit}
+                            </Text>
+                          </View>
+                        )}
+                        {canManage && (
+                          <TouchableOpacity style={styles.inlineBtn} onPress={() => openQuizGrading(quiz)}>
+                            <Text style={styles.inlineBtnText}>Review & Grade</Text>
                           </TouchableOpacity>
-                        );
-                      })()}
-                      <Text style={styles.pendingPill}>
-                        Attempts: {quiz.my_attempt?.attempts_used ?? 0}/{quiz.my_attempt?.attempt_limit ?? quiz.attempt_limit}
-                      </Text>
-                    </View>
-                  )}
-                  {canManage && (
-                    <TouchableOpacity style={styles.inlineBtn} onPress={() => openQuizGrading(quiz)}>
-                      <Text style={styles.inlineBtnText}>Review & Grade</Text>
-                    </TouchableOpacity>
-                  )}
-                  {canManage && <ItemActions onEdit={() => openEdit(quiz)} onDelete={() => deleteItem(quiz.id)} />}
-                </TouchableOpacity>
-              );
-            })}
+                        )}
+                        {canManage && <ItemActions onEdit={() => openEdit(quiz)} onDelete={() => deleteItem(quiz.id)} />}
+                      </TouchableOpacity>
+                    );
+                  };
+
+                  const renderAccordionSection = (title: string, items: Quiz[], accentColor: string) => {
+                    if (items.length === 0) return null;
+                    return (
+                      <View key={title} style={styles.accordionSection}>
+                        <View style={[styles.accordionHeader, { borderBottomColor: colors.border }]}>
+                          <View style={[styles.accordionAccent, { backgroundColor: accentColor }]} />
+                          <Text style={[styles.accordionTitle, { color: colors.textSecondary }]}>{title}</Text>
+                          <Text style={[styles.accordionCount, { color: colors.mutedForeground }]}>{items.length}</Text>
+                        </View>
+                        <View style={styles.accordionContent}>
+                          {items.map(renderQuizCard)}
+                        </View>
+                      </View>
+                    );
+                  };
+
+                  return (
+                    <>
+                      {renderAccordionSection('Missing', missing, Colors.accentRed)}
+                      {renderAccordionSection('Open', open, '#2E7D32')}
+                      {renderAccordionSection('Closed', closed, colors.mutedForeground)}
+                    </>
+                  );
+                })()
+              )}
             </>
           )}
 
@@ -4185,12 +4222,12 @@ const styles = StyleSheet.create({
   annBody: { fontSize: 14, lineHeight: 20, marginBottom: Spacing.sm },
   annDate: { fontSize: 11 },
   quizCard: { borderRadius: Radius.lg, padding: Spacing.lg, marginBottom: Spacing.sm },
-  quizHeader: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, marginBottom: Spacing.sm },
+  quizHeader: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, marginBottom: Spacing.xs },
   quizStatusDot: { width: 8, height: 8, borderRadius: 4 },
   quizTitle: { flex: 1, fontSize: 15, fontWeight: '600' },
   quizBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: Radius.full },
   quizBadgeText: { fontSize: 11, fontWeight: '600' },
-  quizMeta: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.md, marginBottom: Spacing.sm },
+  quizMeta: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm, marginBottom: Spacing.xs },
   quizMetaItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   quizMetaText: { fontSize: 12 },
   startQuizBtn: {
@@ -4198,10 +4235,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.primary,
     borderRadius: Radius.md,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
     alignItems: 'center',
-    marginTop: Spacing.sm,
   },
   startQuizText: { color: '#FFFFFF', fontSize: 12, fontWeight: '700' },
   emptyState: { alignItems: 'center', paddingVertical: 60 },
