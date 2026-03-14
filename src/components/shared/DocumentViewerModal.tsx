@@ -29,15 +29,11 @@ const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 type DisplayMode = 'page' | 'slide' | 'scroll';
 
-type Props = {
-  visible: boolean;
-  onClose: () => void;
-  rawUrl: string | null;
-  previewUrl?: string | null;
-  fileName?: string;
-  breadcrumb?: string;
-  canAnnotate?: boolean;
-  onOpenOutside?: (url: string) => void;
+export type TocItem = {
+  id: string;
+  title: string;
+  page: number;
+  level: number;
 };
 
 type Annotation = {
@@ -46,11 +42,18 @@ type Annotation = {
   createdAt: string;
 };
 
-type TocItem = {
-  id: string;
-  title: string;
-  page: number;
-  level: number;
+type Props = {
+  visible: boolean;
+  onClose: () => void;
+  rawUrl: string | null;
+  previewUrl?: string | null;
+  fileName?: string;
+  breadcrumb?: string;
+  canAnnotate?: boolean;
+  totalPages?: number;
+  initialPage?: number;
+  tocItems?: TocItem[];
+  onOpenOutside?: (url: string) => void;
 };
 
 const OFFICE_EXT = ['doc', 'docx', 'ppt', 'pptx', 'xls', 'xlsx'];
@@ -418,29 +421,23 @@ export function DocumentViewerModal({
   breadcrumb,
   canAnnotate,
   onOpenOutside,
+  tocItems: tocItemsProp = [],
+  totalPages: totalPagesProp = 1,
+  initialPage = 1,
 }: Props) {
   const insets = useSafeAreaInsets();
   const [displayMode, setDisplayMode] = useState<DisplayMode>('page');
   const [zoom, setZoom] = useState(100);
-  const [currentPage, setCurrentPage] = useState(1);
-  const [totalPages] = useState(12);
+  const [currentPage, setCurrentPage] = useState(initialPage);
   const [isLoading, setIsLoading] = useState(true);
   const [showBottomSheet, setShowBottomSheet] = useState(false);
   const [bottomSheetTab, setBottomSheetTab] = useState<'toc' | 'annotations'>('toc');
   const [isToolbarVisible, setIsToolbarVisible] = useState(true);
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
 
-  // Mock TOC - in real app, this would be extracted from the document
-  const tocItems: TocItem[] = useMemo(() => [
-    { id: '1', title: 'Introduction', page: 1, level: 0 },
-    { id: '2', title: 'Chapter 1: Getting Started', page: 3, level: 0 },
-    { id: '3', title: '1.1 Overview', page: 3, level: 1 },
-    { id: '4', title: '1.2 Prerequisites', page: 5, level: 1 },
-    { id: '5', title: 'Chapter 2: Core Concepts', page: 7, level: 0 },
-    { id: '6', title: '2.1 Architecture', page: 7, level: 1 },
-    { id: '7', title: '2.2 Data Flow', page: 9, level: 1 },
-    { id: '8', title: 'Conclusion', page: 12, level: 0 },
-  ], []);
+  // Use props with defaults
+  const totalPages = totalPagesProp;
+  const tocItems = tocItemsProp;
 
   // Animation values
   const toolbarTranslateY = useSharedValue(0);
@@ -464,12 +461,6 @@ export function DocumentViewerModal({
   }, [rawUrl, previewUrl, canUseCloudOfficeViewer, isOffice, isPdf, privateHost]);
 
   const hasError = !viewerUrl;
-
-  // Toolbar toggle
-  const toggleToolbar = useCallback(() => {
-    setIsToolbarVisible((v) => !v);
-    toolbarTranslateY.value = withSpring(isToolbarVisible ? -100 : 0, { damping: 15 });
-  }, [isToolbarVisible, toolbarTranslateY]);
 
   // Zoom controls
   const handleZoomIn = useCallback(() => {
