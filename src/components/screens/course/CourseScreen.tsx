@@ -423,6 +423,8 @@ export function CourseScreen() {
   const [deadlinePickerVisible, setDeadlinePickerVisible] = useState(false);
   const [quizOpenPickerVisible, setQuizOpenPickerVisible] = useState(false);
   const [quizClosePickerVisible, setQuizClosePickerVisible] = useState(false);
+  const [quickQuizOpenPickerVisible, setQuickQuizOpenPickerVisible] = useState(false);
+  const [quickQuizClosePickerVisible, setQuickQuizClosePickerVisible] = useState(false);
 
   // Score selection policy state for quiz editing (separate from form state)
   const [quizScorePolicy, setQuizScorePolicy] = useState<'latest' | 'highest'>('highest');
@@ -3355,27 +3357,57 @@ export function CourseScreen() {
                 })}
               </View>
             </View>
-            <ToggleRow label="Set Open Date" value={quickQuizHasOpenAt} onToggle={() => setQuickQuizHasOpenAt((p) => !p)} />
+            <ToggleRow
+              label="Set Open Date"
+              value={quickQuizHasOpenAt}
+              onToggle={() => {
+                const newValue = !quickQuizHasOpenAt;
+                setQuickQuizHasOpenAt(newValue);
+                if (newValue && !quickQuizOpenAt) {
+                  setQuickQuizOpenAt(new Date());
+                }
+                if (newValue) {
+                  setQuickQuizOpenPickerVisible(true);
+                }
+              }}
+            />
             {quickQuizHasOpenAt && (
-              <View style={styles.datePickerWrap}>
-                <DateTimePicker
-                  value={quickQuizOpenAt}
-                  hasTime={quickQuizOpenHasTime}
-                  onToggleTime={setQuickQuizOpenHasTime}
-                  onChange={setQuickQuizOpenAt}
-                />
-              </View>
+              <TouchableOpacity
+                style={styles.datePickerButton}
+                onPress={() => setQuickQuizOpenPickerVisible(true)}
+              >
+                <Ionicons name="calendar-outline" size={20} color={Colors.primary} />
+                <Text style={styles.datePickerButtonText}>
+                  Opens: {formatDate(quickQuizOpenAt.toISOString())}
+                </Text>
+                <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
+              </TouchableOpacity>
             )}
-            <ToggleRow label="Set Close Date" value={quickQuizHasCloseAt} onToggle={() => setQuickQuizHasCloseAt((p) => !p)} />
+            <ToggleRow
+              label="Set Close Date"
+              value={quickQuizHasCloseAt}
+              onToggle={() => {
+                const newValue = !quickQuizHasCloseAt;
+                setQuickQuizHasCloseAt(newValue);
+                if (newValue && !quickQuizCloseAt) {
+                  setQuickQuizCloseAt(new Date(Date.now() + 60 * 60 * 1000));
+                }
+                if (newValue) {
+                  setQuickQuizClosePickerVisible(true);
+                }
+              }}
+            />
             {quickQuizHasCloseAt && (
-              <View style={styles.datePickerWrap}>
-                <DateTimePicker
-                  value={quickQuizCloseAt}
-                  hasTime={quickQuizCloseHasTime}
-                  onToggleTime={setQuickQuizCloseHasTime}
-                  onChange={setQuickQuizCloseAt}
-                />
-              </View>
+              <TouchableOpacity
+                style={styles.datePickerButton}
+                onPress={() => setQuickQuizClosePickerVisible(true)}
+              >
+                <Ionicons name="calendar-outline" size={20} color={Colors.primary} />
+                <Text style={styles.datePickerButtonText}>
+                  Closes: {formatDate(quickQuizCloseAt.toISOString())}
+                </Text>
+                <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
+              </TouchableOpacity>
             )}
             {quickQuizQuestions.map((q, idx) => (
               <View key={`quick-q-${idx}`} style={styles.gradeCard}>
@@ -3496,6 +3528,28 @@ export function CourseScreen() {
         }}
         onClose={() => setQuizClosePickerVisible(false)}
         hasTime={quizCloseHasTime}
+      />
+
+      <DateTimePickerModal
+        visible={quickQuizOpenPickerVisible}
+        value={quickQuizOpenAt}
+        onChange={(date) => {
+          setQuickQuizOpenAt(date);
+          setQuickQuizOpenHasTime(true);
+        }}
+        onClose={() => setQuickQuizOpenPickerVisible(false)}
+        hasTime={quickQuizOpenHasTime}
+      />
+
+      <DateTimePickerModal
+        visible={quickQuizClosePickerVisible}
+        value={quickQuizCloseAt}
+        onChange={(date) => {
+          setQuickQuizCloseAt(date);
+          setQuickQuizCloseHasTime(true);
+        }}
+        onClose={() => setQuickQuizClosePickerVisible(false)}
+        hasTime={quickQuizCloseHasTime}
       />
 
       {/* Roll Call Date Picker */}
