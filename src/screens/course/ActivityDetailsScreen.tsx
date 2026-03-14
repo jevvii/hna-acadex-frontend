@@ -18,6 +18,7 @@ import { useTheme } from '@/contexts/ThemeContext';
 import { Activity, SubmissionStatus, ActivityStatus } from '@/types';
 import { Colors, Spacing, Radius, Shadows } from '@/constants/colors';
 import { CircularScore } from '@/components/shared/CircularScore';
+import { ReminderPickerDialog, ReminderValue } from '@/components/shared/ReminderPickerDialog';
 import { useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
 import { formatDate } from './utils';
 
@@ -62,6 +63,10 @@ export function ActivityDetailsScreen({
   // For now, we use the prop or a placeholder
   const activity = propActivity;
 
+  // Reminder state
+  const [reminders, setReminders] = useState<ReminderValue[]>([]);
+  const [reminderPickerVisible, setReminderPickerVisible] = useState(false);
+
   // Derive status from submission data
   const status = useMemo(() => {
     return getActivityStatus(activity?.my_submission);
@@ -73,6 +78,39 @@ export function ActivityDetailsScreen({
 
   // Get submission data
   const submission = activity?.my_submission;
+
+  
+
+  const handleAddReminder = useCallback((reminder: ReminderValue) => {
+    setReminders((prev) => {
+      // Avoid duplicates
+      if (prev.some((r) => r.id === reminder.id)) return prev;
+      return [...prev, reminder];
+    });
+  }, []);
+
+  const handleRemoveReminder = useCallback((reminderId: string) => {
+    setReminders((prev) => prev.filter((r) => r.id !== reminderId));
+  }, []);
+
+  const formatReminderLabel = useCallback((reminder: ReminderValue) => {
+    // Calculate the actual reminder time based on the activity's due date
+    if (reminder.reminderDate) {
+      // If we have a calculated reminder date, display it
+      return formatDate(reminder.reminderDate.toISOString());
+    }
+
+    // Fallback: construct label from value/unit
+    const unitLabels: Record<string, string> = {
+      minutes: 'Minute',
+      hours: 'Hour',
+      days: 'Day',
+      weeks: 'Week',
+    };
+    const unitLabel = unitLabels[reminder.unit] || 'Minute';
+    const pluralLabel = reminder.value === 1 ? unitLabel : `${unitLabel}s`;
+    return `${reminder.value} ${pluralLabel} Before`;
+  }, []);
 
   const handleBack = useCallback(() => {
     if (onClose) {
@@ -248,15 +286,13 @@ export function ActivityDetailsScreen({
 
         <TouchableOpacity
           style={[styles.actionCardOutline, { borderColor: Colors.primary, backgroundColor: colors.surface }]}
+          onPress={() => setReminderPickerVisible(true)}
           activeOpacity={0.9}
         >
           <View style={styles.actionCardContent}>
-            <View style={styles.actionCardLeft}>
-              <Ionicons name="add" size={20} color={Colors.primary} />
-              <Text style={[styles.actionCardTextOutline, { color: Colors.primary }]}>
-                Add due date reminder
-              </Text>
-            </View>
+            <Text style={[styles.actionCardTextOutline, { color: Colors.primary }]}>
+              Add due date reminder
+            </Text>
             <Ionicons name="chevron-forward" size={20} color={Colors.primary} />
           </View>
         </TouchableOpacity>
@@ -323,6 +359,34 @@ export function ActivityDetailsScreen({
               <Text style={[styles.infoValue, { color: colors.textPrimary }]}>
                 {formatDate(submission.submitted_at)}
               </Text>
+            </View>
+          )}
+
+          {/* Reminders */}
+          {reminders.length > 0 && (
+            <View style={styles.infoItem}>
+              <Text style={[styles.infoLabel, { color: colors.mutedForeground }]}>REMINDERS</Text>
+              <View style={styles.remindersList}>
+                {reminders.map((reminder) => (
+                  <View
+                    key={reminder.id}
+                    style={[styles.reminderItem, { backgroundColor: colors.background, borderColor: colors.border }]}
+                  >
+                    <View style={styles.reminderContent}>
+                      <Ionicons name="notifications" size={18} color={Colors.primary} />
+                      <Text style={[styles.reminderText, { color: colors.textPrimary }]}>
+                        {formatReminderLabel(reminder)}
+                      </Text>
+                    </View>
+                    <TouchableOpacity
+                      onPress={() => handleRemoveReminder(reminder.id)}
+                      style={styles.reminderRemove}
+                    >
+                      <Ionicons name="close-circle" size={20} color={colors.mutedForeground} />
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </View>
             </View>
           )}
 
@@ -418,6 +482,14 @@ export function ActivityDetailsScreen({
           </TouchableOpacity>
         </View>
       )}
+
+      {/* Reminder Picker Dialog */}
+      <ReminderPickerDialog
+        visible={reminderPickerVisible}
+        onSelect={handleAddReminder}
+        onClose={() => setReminderPickerVisible(false)}
+        deadline={activity?.deadline ? new Date(activity.deadline) : undefined}
+      />
     </SafeAreaView>
   );
 }
@@ -663,6 +735,33 @@ const styles = StyleSheet.create({
   feedbackText: {
     fontSize: 15,
     lineHeight: 22,
+  },
+  remindersList: {
+    gap: Spacing.sm,
+    marginTop: Spacing.xs,
+  },
+  reminderItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.md,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+  },
+  reminderContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    flex: 1,
+  },
+  reminderText: {
+    fontSize: 15,
+    fontWeight: '500',
+  },
+  reminderRemove: {
+    padding: Spacing.xs,
+    marginLeft: Spacing.sm,
   },
   bottomBar: {
     position: 'absolute',

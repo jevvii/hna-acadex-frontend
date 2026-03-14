@@ -63,13 +63,28 @@ export function DatePickerModal({
   const [showYearPicker, setShowYearPicker] = useState(false);
   const yearScrollViewRef = useRef<ScrollView>(null);
 
-  // Generate years from current year - 5 to current year + 10
+  // Generate years based on minDate and maxDate constraints
   const currentYear = new Date().getFullYear();
   const years = useMemo(() => {
-    const startYear = currentYear - 5;
-    const endYear = currentYear + 10;
+    // Start from current year (or minDate year if earlier)
+    let startYear = currentYear;
+    if (minDate) {
+      startYear = Math.min(startYear, minDate.getFullYear());
+    }
+
+    // End at current year + 10 (or maxDate year if earlier)
+    let endYear = currentYear + 10;
+    if (maxDate) {
+      endYear = Math.min(endYear, maxDate.getFullYear());
+    }
+
+    // Ensure endYear is not before startYear
+    if (endYear < startYear) {
+      endYear = startYear;
+    }
+
     return Array.from({ length: endYear - startYear + 1 }, (_, i) => startYear + i);
-  }, [currentYear]);
+  }, [currentYear, minDate, maxDate]);
 
   // Update view when value changes externally
   React.useEffect(() => {
@@ -151,8 +166,20 @@ export function DatePickerModal({
   const isDateDisabled = (day: number): boolean => {
     if (!day) return true;
     const date = new Date(viewYear, viewMonth, day);
-    if (minDate && date < minDate) return true;
-    if (maxDate && date > maxDate) return true;
+    // Normalize dates to start of day for comparison
+    const dateOnly = new Date(viewYear, viewMonth, day);
+    dateOnly.setHours(0, 0, 0, 0);
+
+    if (minDate) {
+      const minDateOnly = new Date(minDate);
+      minDateOnly.setHours(0, 0, 0, 0);
+      if (dateOnly < minDateOnly) return true;
+    }
+    if (maxDate) {
+      const maxDateOnly = new Date(maxDate);
+      maxDateOnly.setHours(0, 0, 0, 0);
+      if (dateOnly > maxDateOnly) return true;
+    }
     return false;
   };
 
