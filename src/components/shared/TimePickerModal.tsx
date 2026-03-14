@@ -53,6 +53,9 @@ export function TimePickerModal({
   const modeRef = useRef(mode);
   const isAmRef = useRef(isAm);
   const clockRadiusRef = useRef(clockRadius);
+  // Store clock face position (page coordinates) for accurate touch handling
+  const clockLayoutRef = useRef({ x: 0, y: 0, width: clockSize, height: clockSize });
+  const clockFaceRef = useRef<View>(null);
 
   // Keep refs in sync with state
   useEffect(() => {
@@ -64,6 +67,15 @@ export function TimePickerModal({
   // Update clock radius ref (in case dimensions change)
   clockRadiusRef.current = clockRadius;
 
+  // Measure clock face position after render
+  const measureClockFace = useCallback(() => {
+    if (clockFaceRef.current) {
+      clockFaceRef.current.measure((x, y, width, height, pageX, pageY) => {
+        clockLayoutRef.current = { x: pageX, y: pageY, width, height };
+      });
+    }
+  }, []);
+
   // Reset state when modal opens
   useEffect(() => {
     if (visible) {
@@ -71,8 +83,10 @@ export function TimePickerModal({
       setSelectedMinute(value.getMinutes());
       setIsAm(value.getHours() < 12);
       setMode('hour');
+      // Measure clock face after modal opens
+      setTimeout(measureClockFace, 100);
     }
-  }, [visible, value]);
+  }, [visible, value, measureClockFace]);
 
   const handleHourSelect = (hour: number) => {
     // Convert 12-hour to 24-hour
@@ -136,16 +150,20 @@ export function TimePickerModal({
   const displayHour = selectedHour % 12 || 12;
   const displayMinute = selectedMinute.toString().padStart(2, '0');
 
-  // Handle pan move - inline all calculations to avoid stale closures
-  const handlePanMove = useCallback((x: number, y: number) => {
+  // Handle pan move using page coordinates (screen coordinates)
+  // This fixes the issue where locationX/locationY were relative to child elements
+  const handlePanMove = useCallback((pageX: number, pageY: number) => {
     // Get current values from refs
     const currentClockRadius = clockRadiusRef.current;
     const currentMode = modeRef.current;
     const currentIsAm = isAmRef.current;
+    const clockLayout = clockLayoutRef.current;
 
-    // Convert to relative coordinates from center
-    const relX = x - currentClockRadius;
-    const relY = y - currentClockRadius;
+    // Convert page coordinates to clock face coordinates
+    // pageX/pageY are screen coordinates, so we subtract the clock face's screen position
+    // and then subtract clockRadius to get coordinates relative to center
+    const relX = (pageX - clockLayout.x) - currentClockRadius;
+    const relY = (pageY - clockLayout.y) - currentClockRadius;
 
     // Calculate angle from center (0° at top, clockwise)
     const rawAngle = Math.atan2(relY, relX) * (180 / Math.PI);
@@ -166,15 +184,18 @@ export function TimePickerModal({
   }, []); // No dependencies - use refs for all values
 
   // Pan responder for dragging the hand
+  // Use pageX/pageY instead of locationX/locationY to get accurate coordinates
+  // regardless of which child element is touched
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: () => true,
       onPanResponderGrant: (evt) => {
-        handlePanMove(evt.nativeEvent.locationX, evt.nativeEvent.locationY);
+        // Use pageX/pageY (screen coordinates) for accurate touch position
+        handlePanMove(evt.nativeEvent.pageX, evt.nativeEvent.pageY);
       },
       onPanResponderMove: (evt) => {
-        handlePanMove(evt.nativeEvent.locationX, evt.nativeEvent.locationY);
+        handlePanMove(evt.nativeEvent.pageX, evt.nativeEvent.pageY);
       },
       onPanResponderRelease: () => {
         // Drag ended - state is already updated during drag
@@ -241,8 +262,10 @@ export function TimePickerModal({
           {/* Clock face */}
           <View style={styles.clockContainer}>
             <View
+              ref={clockFaceRef}
               style={[styles.clockFace, { width: clockSize, height: clockSize }]}
               {...panResponder.panHandlers}
+              onLayout={measureClockFace}
             >
               {/* Numbers around the edge */}
               {clockNumbers.map((num, index) => {
