@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -7,14 +7,27 @@ import {
   TouchableOpacity,
   TextInput,
   ScrollView,
-  Platform,
+  Pressable,
+  Dimensions,
 } from 'react-native';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withSpring,
+  withTiming,
+  withRepeat,
+  withSequence,
+  interpolate,
+  Easing,
+} from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 import { WebView } from 'react-native-webview';
 import { Colors, Radius, Shadows, Spacing } from '@/constants/colors';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 type DisplayMode = 'page' | 'slide' | 'scroll';
-type FitMode = 'width' | 'page' | null;
 
 type Props = {
   visible: boolean;
@@ -31,6 +44,13 @@ type Annotation = {
   id: string;
   text: string;
   createdAt: string;
+};
+
+type TocItem = {
+  id: string;
+  title: string;
+  page: number;
+  level: number;
 };
 
 const OFFICE_EXT = ['doc', 'docx', 'ppt', 'pptx', 'xls', 'xlsx'];
@@ -64,6 +84,331 @@ function isPrivateOrLocalHttpUrl(value?: string | null) {
   }
 }
 
+// Skeleton loader component
+function SkeletonLoader() {
+  const shimmerValue = useSharedValue(0);
+
+  shimmerValue.value = withRepeat(
+    withSequence(
+      withTiming(1, { duration: 1000, easing: Easing.inOut(Easing.ease) }),
+      withTiming(0, { duration: 1000, easing: Easing.inOut(Easing.ease) })
+    ),
+    -1,
+    false
+  );
+
+  const shimmerStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(shimmerValue.value, [0, 1], [0.3, 0.7]),
+  }));
+
+  return (
+    <View style={styles.skeletonContainer}>
+      <Animated.View style={[styles.skeletonBanner, shimmerStyle]} />
+      <View style={styles.skeletonContent}>
+        <Animated.View style={[styles.skeletonLine, styles.skeletonLineLarge, shimmerStyle]} />
+        <Animated.View style={[styles.skeletonLine, styles.skeletonLineMedium, shimmerStyle]} />
+        <Animated.View style={[styles.skeletonLine, styles.skeletonLineSmall, shimmerStyle]} />
+        <View style={styles.skeletonSpacing} />
+        <Animated.View style={[styles.skeletonLine, styles.skeletonLineLarge, shimmerStyle]} />
+        <Animated.View style={[styles.skeletonLine, styles.skeletonLineMedium, shimmerStyle]} />
+      </View>
+    </View>
+  );
+}
+
+// Empty state component
+function EmptyState({
+  isOffice,
+  privateHost,
+  onOpenOutside,
+  rawUrl
+}: {
+  isOffice: boolean;
+  privateHost: boolean;
+  onOpenOutside?: (url: string) => void;
+  rawUrl?: string | null;
+}) {
+  return (
+    <View style={styles.emptyContainer}>
+      <View style={styles.emptyIconContainer}>
+        <Ionicons name="document-text-outline" size={64} color={Colors.light.mutedForeground} />
+      </View>
+      <Text style={styles.emptyTitle}>Preview Unavailable</Text>
+      <Text style={styles.emptySubtitle}>
+        {isOffice && privateHost
+          ? 'This Office file is hosted privately and cannot be previewed.'
+          : 'This document cannot be displayed in the app.'}
+      </Text>
+      {rawUrl && (
+        <TouchableOpacity
+          style={styles.emptyCtaButton}
+          onPress={() => onOpenOutside?.(rawUrl)}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="open-outline" size={18} color={Colors.primary} />
+          <Text style={styles.emptyCtaText}>Open in External App</Text>
+        </TouchableOpacity>
+      )}
+    </View>
+  );
+}
+
+// Floating page indicator pill
+function PageIndicator({
+  currentPage,
+  totalPages,
+  visible
+}: {
+  currentPage: number;
+  totalPages: number;
+  visible: boolean;
+}) {
+  const opacity = useSharedValue(visible ? 1 : 0);
+  const scale = useSharedValue(visible ? 1 : 0.8);
+
+  opacity.value = withTiming(visible ? 1 : 0, { duration: 200 });
+  scale.value = withSpring(visible ? 1 : 0.8, { damping: 15 });
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    opacity: opacity.value,
+    transform: [{ scale: scale.value }],
+  }));
+
+  if (totalPages <= 0) return null;
+
+  return (
+    <Animated.View style={[styles.pageIndicatorPill, animatedStyle]}>
+      <Text style={styles.pageIndicatorText}>
+        {currentPage} / {totalPages}
+      </Text>
+    </Animated.View>
+  );
+}
+
+// Zoom controls component
+function ZoomControls({
+  zoom,
+  onZoomIn,
+  onZoomOut,
+  onFitWidth,
+}: {
+  zoom: number;
+  onZoomIn: () => void;
+  onZoomOut: () => void;
+  onFitWidth: () => void;
+}) {
+  return (
+    <View style={styles.zoomControls}>
+      <TouchableOpacity style={styles.zoomBtn} onPress={onZoomOut} activeOpacity={0.6}>
+        <Ionicons name="remove-outline" size={18} color={Colors.light.textSecondary} />
+      </TouchableOpacity>
+      <Text style={styles.zoomText}>{zoom}%</Text>
+      <TouchableOpacity style={styles.zoomBtn} onPress={onZoomIn} activeOpacity={0.6}>
+        <Ionicons name="add-outline" size={18} color={Colors.light.textSecondary} />
+      </TouchableOpacity>
+      <View style={styles.zoomDivider} />
+      <TouchableOpacity style={styles.zoomBtn} onPress={onFitWidth} activeOpacity={0.6}>
+        <Text style={styles.zoomBtnText}>Fit</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+// Bottom sheet component for TOC/Annotations
+function BottomSheet({
+  visible,
+  onClose,
+  activeTab,
+  onTabChange,
+  tocItems,
+  annotations,
+  canAnnotate,
+  onAddAnnotation,
+  onPageSelect,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  activeTab: 'toc' | 'annotations';
+  onTabChange: (tab: 'toc' | 'annotations') => void;
+  tocItems: TocItem[];
+  annotations: Annotation[];
+  canAnnotate: boolean;
+  onAddAnnotation: (text: string) => void;
+  onPageSelect: (page: number) => void;
+}) {
+  const translateY = useSharedValue(SCREEN_HEIGHT);
+  const backdropOpacity = useSharedValue(0);
+  const [annotationInput, setAnnotationInput] = useState('');
+  const [annotationFilter, setAnnotationFilter] = useState('');
+
+  React.useEffect(() => {
+    if (visible) {
+      translateY.value = withSpring(0, { damping: 20, stiffness: 100 });
+      backdropOpacity.value = withTiming(0.4, { duration: 200 });
+    } else {
+      translateY.value = withTiming(SCREEN_HEIGHT, { duration: 250 });
+      backdropOpacity.value = withTiming(0, { duration: 200 });
+    }
+  }, [visible]);
+
+  const backdropStyle = useAnimatedStyle(() => ({
+    opacity: backdropOpacity.value,
+  }));
+
+  const sheetStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: translateY.value }],
+  }));
+
+  const filteredAnnotations = annotations.filter((a) =>
+    a.text.toLowerCase().includes(annotationFilter.trim().toLowerCase()),
+  );
+
+  const handleAddAnnotation = () => {
+    if (annotationInput.trim()) {
+      onAddAnnotation(annotationInput.trim());
+      setAnnotationInput('');
+    }
+  };
+
+  return (
+    <>
+      <Animated.View style={[styles.backdrop, backdropStyle]} pointerEvents={visible ? 'auto' : 'none'}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+      </Animated.View>
+      <Animated.View style={[styles.bottomSheet, sheetStyle]} pointerEvents={visible ? 'auto' : 'none'}>
+        <View style={styles.sheetHandle} />
+        <View style={styles.sheetTabs}>
+          <TouchableOpacity
+            style={[styles.sheetTab, activeTab === 'toc' && styles.sheetTabActive]}
+            onPress={() => onTabChange('toc')}
+            activeOpacity={0.6}
+          >
+            <Ionicons
+              name="list-outline"
+              size={18}
+              color={activeTab === 'toc' ? Colors.primary : Colors.light.textSecondary}
+            />
+            <Text style={[styles.sheetTabText, activeTab === 'toc' && styles.sheetTabTextActive]}>
+              Outline
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.sheetTab, activeTab === 'annotations' && styles.sheetTabActive]}
+            onPress={() => onTabChange('annotations')}
+            activeOpacity={0.6}
+          >
+            <Ionicons
+              name="chatbubble-outline"
+              size={18}
+              color={activeTab === 'annotations' ? Colors.primary : Colors.light.textSecondary}
+            />
+            <Text style={[styles.sheetTabText, activeTab === 'annotations' && styles.sheetTabTextActive]}>
+              Comments
+            </Text>
+            {annotations.length > 0 && (
+              <View style={styles.annotationBadge}>
+                <Text style={styles.annotationBadgeText}>{annotations.length}</Text>
+              </View>
+            )}
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.sheetContent}>
+          {activeTab === 'toc' ? (
+            tocItems.length > 0 ? (
+              <ScrollView showsVerticalScrollIndicator={false}>
+                {tocItems.map((item) => (
+                  <TouchableOpacity
+                    key={item.id}
+                    style={[styles.tocItem, { paddingLeft: 16 + item.level * 12 }]}
+                    onPress={() => {
+                      onPageSelect(item.page);
+                      onClose();
+                    }}
+                    activeOpacity={0.6}
+                  >
+                    <Text style={styles.tocItemText} numberOfLines={1}>
+                      {item.title}
+                    </Text>
+                    <Text style={styles.tocItemPage}>{item.page}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            ) : (
+              <View style={styles.emptySheetState}>
+                <Ionicons name="list-outline" size={32} color={Colors.light.mutedForeground} />
+                <Text style={styles.emptySheetText}>No outline available</Text>
+                <Text style={styles.emptySheetHint}>
+                  This document doesn't have a table of contents.
+                </Text>
+              </View>
+            )
+          ) : (
+            <View style={{ flex: 1 }}>
+              {canAnnotate && (
+                <View style={styles.annotationInputRow}>
+                  <TextInput
+                    style={styles.annotationInput}
+                    value={annotationInput}
+                    onChangeText={setAnnotationInput}
+                    placeholder="Add a comment..."
+                    placeholderTextColor={Colors.light.mutedForeground}
+                  />
+                  <TouchableOpacity
+                    style={[styles.annotationAddBtn, !annotationInput.trim() && styles.annotationAddBtnDisabled]}
+                    onPress={handleAddAnnotation}
+                    disabled={!annotationInput.trim()}
+                    activeOpacity={0.6}
+                  >
+                    <Ionicons name="send" size={16} color="#FFFFFF" />
+                  </TouchableOpacity>
+                </View>
+              )}
+              {!canAnnotate && (
+                <View style={styles.teacherOnlyNote}>
+                  <Ionicons name="lock-closed-outline" size={14} color={Colors.light.mutedForeground} />
+                  <Text style={styles.teacherOnlyNoteText}>Only teachers can add comments</Text>
+                </View>
+              )}
+              {annotations.length > 0 && (
+                <TextInput
+                  style={styles.annotationFilter}
+                  value={annotationFilter}
+                  onChangeText={setAnnotationFilter}
+                  placeholder="Search comments..."
+                  placeholderTextColor={Colors.light.mutedForeground}
+                />
+              )}
+              <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
+                {filteredAnnotations.map((a) => (
+                  <View key={a.id} style={styles.annotationItem}>
+                    <Text style={styles.annotationText}>{a.text}</Text>
+                    <Text style={styles.annotationMeta}>
+                      {new Date(a.createdAt).toLocaleDateString()}
+                    </Text>
+                  </View>
+                ))}
+                {filteredAnnotations.length === 0 && annotations.length > 0 && (
+                  <Text style={styles.noMatchText}>No matching comments</Text>
+                )}
+                {annotations.length === 0 && (
+                  <View style={styles.emptySheetState}>
+                    <Ionicons name="chatbubble-outline" size={32} color={Colors.light.mutedForeground} />
+                    <Text style={styles.emptySheetText}>No comments yet</Text>
+                    {canAnnotate && (
+                      <Text style={styles.emptySheetHint}>Be the first to add a comment.</Text>
+                    )}
+                  </View>
+                )}
+              </ScrollView>
+            </View>
+          )}
+        </View>
+      </Animated.View>
+    </>
+  );
+}
+
 export function DocumentViewerModal({
   visible,
   onClose,
@@ -74,15 +419,31 @@ export function DocumentViewerModal({
   canAnnotate,
   onOpenOutside,
 }: Props) {
+  const insets = useSafeAreaInsets();
   const [displayMode, setDisplayMode] = useState<DisplayMode>('page');
-  const [fitMode, setFitMode] = useState<FitMode>('width');
   const [zoom, setZoom] = useState(100);
   const [currentPage, setCurrentPage] = useState(1);
-  const [showThumbs, setShowThumbs] = useState(true);
-  const [showToc, setShowToc] = useState(true);
+  const [totalPages] = useState(12);
+  const [isLoading, setIsLoading] = useState(true);
+  const [showBottomSheet, setShowBottomSheet] = useState(false);
+  const [bottomSheetTab, setBottomSheetTab] = useState<'toc' | 'annotations'>('toc');
+  const [isToolbarVisible, setIsToolbarVisible] = useState(true);
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
-  const [annotationInput, setAnnotationInput] = useState('');
-  const [annotationFilter, setAnnotationFilter] = useState('');
+
+  // Mock TOC - in real app, this would be extracted from the document
+  const tocItems: TocItem[] = useMemo(() => [
+    { id: '1', title: 'Introduction', page: 1, level: 0 },
+    { id: '2', title: 'Chapter 1: Getting Started', page: 3, level: 0 },
+    { id: '3', title: '1.1 Overview', page: 3, level: 1 },
+    { id: '4', title: '1.2 Prerequisites', page: 5, level: 1 },
+    { id: '5', title: 'Chapter 2: Core Concepts', page: 7, level: 0 },
+    { id: '6', title: '2.1 Architecture', page: 7, level: 1 },
+    { id: '7', title: '2.2 Data Flow', page: 9, level: 1 },
+    { id: '8', title: 'Conclusion', page: 12, level: 0 },
+  ], []);
+
+  // Animation values
+  const toolbarTranslateY = useSharedValue(0);
 
   const name = fileName || 'Document';
   const ext = extFrom(fileName || rawUrl);
@@ -94,9 +455,7 @@ export function DocumentViewerModal({
   const viewerUrl = useMemo(() => {
     if (!rawUrl) return null;
     if (canUseCloudOfficeViewer) return officeViewerUrl(rawUrl);
-    if (isPdf) {
-      return rawUrl;
-    }
+    if (isPdf) return rawUrl;
     if (isOffice && privateHost) {
       if (previewUrl) return previewUrl;
       return null;
@@ -104,314 +463,654 @@ export function DocumentViewerModal({
     return rawUrl;
   }, [rawUrl, previewUrl, canUseCloudOfficeViewer, isOffice, isPdf, privateHost]);
 
-  const filteredAnnotations = annotations.filter((a) =>
-    a.text.toLowerCase().includes(annotationFilter.trim().toLowerCase()),
-  );
+  const hasError = !viewerUrl;
 
-  const addAnnotation = () => {
-    const text = annotationInput.trim();
-    if (!text) return;
-    setAnnotations((prev) => [{ id: String(Date.now()), text, createdAt: new Date().toISOString() }, ...prev]);
-    setAnnotationInput('');
-  };
+  // Toolbar toggle
+  const toggleToolbar = useCallback(() => {
+    setIsToolbarVisible((v) => !v);
+    toolbarTranslateY.value = withSpring(isToolbarVisible ? -100 : 0, { damping: 15 });
+  }, [isToolbarVisible, toolbarTranslateY]);
 
-  const canPage = isPdf;
+  // Zoom controls
+  const handleZoomIn = useCallback(() => {
+    setZoom((z) => Math.min(z + 25, 300));
+  }, []);
+
+  const handleZoomOut = useCallback(() => {
+    setZoom((z) => Math.max(z - 25, 50));
+  }, []);
+
+  const handleFitWidth = useCallback(() => {
+    setZoom(100);
+  }, []);
+
+  // Page navigation
+  const goToPage = useCallback((page: number) => {
+    if (page >= 1 && page <= totalPages) {
+      setCurrentPage(page);
+    }
+  }, [totalPages]);
+
+  const nextPage = useCallback(() => {
+    goToPage(currentPage + 1);
+  }, [currentPage, goToPage]);
+
+  const prevPage = useCallback(() => {
+    goToPage(currentPage - 1);
+  }, [currentPage, goToPage]);
+
+  // Add annotation
+  const addAnnotation = useCallback((text: string) => {
+    setAnnotations((prev) => [
+      { id: String(Date.now()), text, createdAt: new Date().toISOString() },
+      ...prev,
+    ]);
+  }, []);
+
+  // Loading simulation
+  React.useEffect(() => {
+    if (visible && viewerUrl) {
+      setIsLoading(true);
+      const timer = setTimeout(() => setIsLoading(false), 1500);
+      return () => clearTimeout(timer);
+    }
+    return () => {};
+  }, [visible, viewerUrl]);
+
+  const toolbarAnimatedStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: toolbarTranslateY.value }],
+  }));
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <View style={styles.root}>
+      <View style={[styles.root, { paddingTop: insets.top }]}>
+        {/* Header */}
         <View style={styles.header}>
-          <TouchableOpacity onPress={onClose}><Text style={styles.closeText}>Close</Text></TouchableOpacity>
+          <TouchableOpacity style={styles.closeBtn} onPress={onClose} activeOpacity={0.6}>
+            <Ionicons name="chevron-back" size={24} color={Colors.primary} />
+            <Text style={styles.closeText}>Back</Text>
+          </TouchableOpacity>
           <View style={styles.headerCenter}>
-            <Text style={styles.breadcrumb} numberOfLines={1}>{breadcrumb || 'Course / Module / File'}</Text>
-            <Text style={styles.title} numberOfLines={1}>{name}</Text>
+            {breadcrumb && (
+              <Text style={styles.breadcrumb} numberOfLines={1}>
+                {breadcrumb}
+              </Text>
+            )}
+            <Text style={styles.title} numberOfLines={1}>
+              {name}
+            </Text>
           </View>
-          <TouchableOpacity onPress={() => viewerUrl && onOpenOutside?.(viewerUrl)} disabled={!viewerUrl}>
-            <Ionicons name="download-outline" size={20} color={Colors.primary} />
+          <TouchableOpacity
+            style={styles.headerAction}
+            onPress={() => setShowBottomSheet(true)}
+            activeOpacity={0.6}
+          >
+            <Ionicons name="ellipsis-horizontal" size={22} color={Colors.light.textSecondary} />
           </TouchableOpacity>
         </View>
 
-        <View style={styles.toolbar}>
-          <TouchableOpacity style={styles.toolBtn} onPress={() => setDisplayMode('page')}><Text style={[styles.toolText, displayMode === 'page' && styles.toolTextActive]}>Page</Text></TouchableOpacity>
-          <TouchableOpacity style={styles.toolBtn} onPress={() => setDisplayMode('slide')}><Text style={[styles.toolText, displayMode === 'slide' && styles.toolTextActive]}>Slide</Text></TouchableOpacity>
-          <TouchableOpacity style={styles.toolBtn} onPress={() => setDisplayMode('scroll')}><Text style={[styles.toolText, displayMode === 'scroll' && styles.toolTextActive]}>Scroll</Text></TouchableOpacity>
-          <TouchableOpacity style={styles.toolBtn} onPress={() => setZoom((v) => Math.max(50, v - 10))}><Ionicons name="remove-outline" size={16} color="#334155" /></TouchableOpacity>
-          <Text style={styles.zoomText}>{zoom}%</Text>
-          <TouchableOpacity style={styles.toolBtn} onPress={() => setZoom((v) => Math.min(250, v + 10))}><Ionicons name="add-outline" size={16} color="#334155" /></TouchableOpacity>
-          <TouchableOpacity style={styles.toolBtn} onPress={() => setFitMode('width')}><Text style={styles.toolText}>Fit W</Text></TouchableOpacity>
-          <TouchableOpacity style={styles.toolBtn} onPress={() => setFitMode('page')}><Text style={styles.toolText}>Fit P</Text></TouchableOpacity>
-          <TouchableOpacity style={styles.toolBtn} onPress={() => setShowThumbs((v) => !v)}><Ionicons name="grid-outline" size={16} color="#334155" /></TouchableOpacity>
-        </View>
-
-        <View style={styles.contentRow}>
-          {showThumbs && (
-            <View style={styles.thumbCol}>
-              <ScrollView contentContainerStyle={styles.thumbList}>
-                {Array.from({ length: 12 }).map((_, idx) => {
-                  const page = idx + 1;
-                  return (
-                    <TouchableOpacity
-                      key={`thumb-${page}`}
-                      style={[styles.thumbItem, currentPage === page && styles.thumbItemActive]}
-                      onPress={() => canPage && setCurrentPage(page)}
-                      disabled={!canPage}
-                    >
-                      <Text style={[styles.thumbText, currentPage === page && styles.thumbTextActive]}>{page}</Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
-            </View>
-          )}
-
-          <View style={styles.viewerCol}>
-            <View style={styles.viewerCard}>
-              {viewerUrl ? (
-                <WebView
-                  source={{ uri: viewerUrl }}
-                  style={styles.webview}
-                  startInLoadingState
-                  javaScriptEnabled
-                  domStorageEnabled
-                />
-              ) : (
-                <View style={styles.emptyView}>
-                  <Ionicons name="document-outline" size={36} color="#64748B" />
-                  <Text style={styles.emptyText}>
-                    {isOffice && privateHost
-                      ? 'No generated in-app preview yet for this Office file.'
-                      : 'No document URL'}
-                  </Text>
-                  <Text style={styles.emptyHint}>
-                    {isOffice && privateHost
-                      ? 'Ask teacher to re-upload and wait for preview processing, or use Open Outside.'
-                      : 'Try opening outside instead.'}
-                  </Text>
-                  {!!rawUrl && (
-                    <TouchableOpacity style={styles.fallbackOpenBtn} onPress={() => onOpenOutside?.(rawUrl)}>
-                      <Text style={styles.fallbackOpenText}>Open Outside</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-              )}
-            </View>
-
-            <View style={styles.footer}>
-              <View style={styles.pageCtrl}>
-                <TouchableOpacity style={styles.toolBtn} onPress={() => canPage && setCurrentPage((v) => Math.max(1, v - 1))} disabled={!canPage}>
-                  <Ionicons name="chevron-back-outline" size={16} color="#334155" />
-                </TouchableOpacity>
-                <Text style={styles.pageText}>{canPage ? `${currentPage}/12` : '-/-'}</Text>
-                <TouchableOpacity style={styles.toolBtn} onPress={() => canPage && setCurrentPage((v) => v + 1)} disabled={!canPage}>
-                  <Ionicons name="chevron-forward-outline" size={16} color="#334155" />
-                </TouchableOpacity>
-              </View>
-              <TouchableOpacity style={styles.downloadBtn} onPress={() => viewerUrl && onOpenOutside?.(viewerUrl)} disabled={!viewerUrl}>
-                <Ionicons name="download-outline" size={14} color="#FFFFFF" />
-                <Text style={styles.downloadText}>Download</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-
-          {showToc && (
-            <View style={styles.sideCol}>
-              <TouchableOpacity style={styles.sideHeader} onPress={() => setShowToc((v) => !v)}>
-                <Text style={styles.sideTitle}>Table of Contents</Text>
-                <Ionicons name="chevron-up-outline" size={14} color="#475569" />
-              </TouchableOpacity>
-              <Text style={styles.sideMuted}>{isPdf ? 'Pages 1-12' : 'Document outline unavailable'}</Text>
-
-              <View style={styles.annHeaderRow}>
-                <Text style={styles.sideTitle}>Annotations</Text>
-              </View>
-              {canAnnotate ? (
-                <>
-                  <TextInput
-                    style={styles.annInput}
-                    value={annotationInput}
-                    onChangeText={setAnnotationInput}
-                    placeholder="Add comment"
-                    placeholderTextColor="#94A3B8"
-                  />
-                  <TouchableOpacity style={styles.annAddBtn} onPress={addAnnotation}>
-                    <Text style={styles.annAddText}>Add</Text>
-                  </TouchableOpacity>
-                </>
-              ) : (
-                <Text style={styles.sideMuted}>Teacher comments only</Text>
-              )}
-              <TextInput
-                style={styles.annInput}
-                value={annotationFilter}
-                onChangeText={setAnnotationFilter}
-                placeholder="Filter comments"
-                placeholderTextColor="#94A3B8"
+        {/* Main content */}
+        <View style={styles.contentArea}>
+          {isLoading && viewerUrl ? (
+            <SkeletonLoader />
+          ) : hasError ? (
+            <EmptyState
+              isOffice={isOffice}
+              privateHost={privateHost}
+              onOpenOutside={onOpenOutside}
+              rawUrl={rawUrl}
+            />
+          ) : (
+            <View style={styles.viewerContainer}>
+              <WebView
+                source={{ uri: viewerUrl! }}
+                style={styles.webview}
+                javaScriptEnabled
+                domStorageEnabled
               />
-              <ScrollView style={{ flex: 1 }}>
-                {filteredAnnotations.map((a) => (
-                  <View key={a.id} style={styles.annItem}>
-                    <Text style={styles.annText}>{a.text}</Text>
-                    <Text style={styles.annMeta}>{new Date(a.createdAt).toLocaleString()}</Text>
-                  </View>
-                ))}
-              </ScrollView>
             </View>
           )}
+
+          {/* Page indicator pill */}
+          {!isLoading && !hasError && (
+            <PageIndicator currentPage={currentPage} totalPages={totalPages} visible={isToolbarVisible} />
+          )}
         </View>
+
+        {/* Auto-hiding toolbar */}
+        <Animated.View style={[styles.toolbar, toolbarAnimatedStyle]}>
+          <View style={styles.toolbarRow}>
+            <TouchableOpacity style={styles.toolBtn} onPress={prevPage} disabled={currentPage <= 1} activeOpacity={0.6}>
+              <Ionicons
+                name="chevron-back-outline"
+                size={18}
+                color={currentPage <= 1 ? Colors.light.mutedForeground : Colors.light.textSecondary}
+              />
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.toolBtn} onPress={nextPage} disabled={currentPage >= totalPages} activeOpacity={0.6}>
+              <Ionicons
+                name="chevron-forward-outline"
+                size={18}
+                color={currentPage >= totalPages ? Colors.light.mutedForeground : Colors.light.textSecondary}
+              />
+            </TouchableOpacity>
+            <View style={styles.toolbarDivider} />
+            <TouchableOpacity
+              style={[styles.displayModeBtn, displayMode === 'page' && styles.displayModeBtnActive]}
+              onPress={() => setDisplayMode('page')}
+              activeOpacity={0.6}
+            >
+              <Ionicons
+                name="document-text-outline"
+                size={16}
+                color={displayMode === 'page' ? Colors.primary : Colors.light.textSecondary}
+              />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.displayModeBtn, displayMode === 'slide' && styles.displayModeBtnActive]}
+              onPress={() => setDisplayMode('slide')}
+              activeOpacity={0.6}
+            >
+              <Ionicons
+                name="easel-outline"
+                size={16}
+                color={displayMode === 'slide' ? Colors.primary : Colors.light.textSecondary}
+              />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.displayModeBtn, displayMode === 'scroll' && styles.displayModeBtnActive]}
+              onPress={() => setDisplayMode('scroll')}
+              activeOpacity={0.6}
+            >
+              <Ionicons
+                name="reader-outline"
+                size={16}
+                color={displayMode === 'scroll' ? Colors.primary : Colors.light.textSecondary}
+              />
+            </TouchableOpacity>
+          </View>
+          <View style={styles.toolbarRow}>
+            <ZoomControls
+              zoom={zoom}
+              onZoomIn={handleZoomIn}
+              onZoomOut={handleZoomOut}
+              onFitWidth={handleFitWidth}
+            />
+            <View style={styles.toolbarSpacer} />
+            <TouchableOpacity
+              style={styles.tocBtn}
+              onPress={() => setShowBottomSheet(true)}
+              activeOpacity={0.6}
+            >
+              <Ionicons name="list-outline" size={18} color={Colors.primary} />
+              <Text style={styles.tocBtnText}>Contents</Text>
+            </TouchableOpacity>
+            {rawUrl && (
+              <TouchableOpacity
+                style={styles.openOutsideBtn}
+                onPress={() => onOpenOutside?.(rawUrl)}
+                activeOpacity={0.6}
+              >
+                <Ionicons name="open-outline" size={16} color={Colors.primary} />
+                <Text style={styles.openOutsideText}>Open</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </Animated.View>
+
+        {/* Bottom sheet for TOC/Annotations */}
+        <BottomSheet
+          visible={showBottomSheet}
+          onClose={() => setShowBottomSheet(false)}
+          activeTab={bottomSheetTab}
+          onTabChange={setBottomSheetTab}
+          tocItems={tocItems}
+          annotations={annotations}
+          canAnnotate={canAnnotate || false}
+          onAddAnnotation={addAnnotation}
+          onPageSelect={(page) => {
+            setCurrentPage(page);
+            setShowBottomSheet(false);
+          }}
+        />
       </View>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#F9F9F9', paddingTop: Platform.OS === 'ios' ? 50 : 22 },
+  root: {
+    flex: 1,
+    backgroundColor: Colors.light.background,
+  },
   header: {
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E2E8F0',
-    paddingHorizontal: Spacing.lg,
-    paddingVertical: 10,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  closeText: { color: '#475569', fontSize: 14, fontWeight: '600' },
-  headerCenter: { flex: 1, paddingHorizontal: 12 },
-  breadcrumb: { color: '#64748B', fontSize: 11, fontWeight: '600' },
-  title: { color: '#1E293B', fontSize: 17, fontWeight: '700', marginTop: 2 },
-  toolbar: {
-    position: 'sticky' as any,
-    top: 0,
-    zIndex: 20,
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E2E8F0',
     paddingHorizontal: Spacing.md,
-    paddingVertical: 8,
+    paddingVertical: Spacing.sm,
+    backgroundColor: Colors.light.surface,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.light.border,
+  },
+  closeBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
   },
-  toolBtn: {
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    borderRadius: Radius.sm,
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 8,
-    paddingVertical: 6,
+  closeText: {
+    color: Colors.primary,
+    fontSize: 16,
+    fontWeight: '600',
   },
-  toolText: { color: '#334155', fontSize: 11, fontWeight: '600' },
-  toolTextActive: { color: '#007ACC' },
-  zoomText: { color: '#334155', fontSize: 12, fontWeight: '700', minWidth: 40, textAlign: 'center' },
-  contentRow: { flex: 1, flexDirection: 'row', gap: 10, padding: 10 },
-  thumbCol: {
-    width: 60,
+  headerCenter: {
+    flex: 1,
+    marginHorizontal: Spacing.md,
+  },
+  breadcrumb: {
+    color: Colors.light.textSecondary,
+    fontSize: 11,
+    fontWeight: '500',
+  },
+  title: {
+    color: Colors.light.textPrimary,
+    fontSize: 16,
+    fontWeight: '700',
+    marginTop: 2,
+  },
+  headerAction: {
+    padding: Spacing.xs,
+  },
+  contentArea: {
+    flex: 1,
+    position: 'relative',
+  },
+  viewerContainer: {
+    flex: 1,
     backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
+  },
+  webview: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+  },
+
+  // Skeleton styles
+  skeletonContainer: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
     borderRadius: Radius.md,
-    ...Shadows.sm,
+    margin: Spacing.md,
+    overflow: 'hidden',
   },
-  thumbList: { paddingVertical: 8, gap: 6, alignItems: 'center' },
-  thumbItem: {
-    width: 42,
-    height: 52,
+  skeletonBanner: {
+    height: 120,
+    backgroundColor: Colors.light.muted,
+  },
+  skeletonContent: {
+    padding: Spacing.lg,
+  },
+  skeletonLine: {
+    height: 16,
+    backgroundColor: Colors.light.muted,
     borderRadius: Radius.sm,
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
+    marginBottom: Spacing.sm,
+  },
+  skeletonLineLarge: {
+    width: '85%',
+  },
+  skeletonLineMedium: {
+    width: '70%',
+  },
+  skeletonLineSmall: {
+    width: '45%',
+  },
+  skeletonSpacing: {
+    height: 24,
+  },
+
+  // Empty state styles
+  emptyContainer: {
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#FFFFFF',
+    padding: Spacing.xxxl,
   },
-  thumbItemActive: { borderColor: '#007ACC', backgroundColor: '#E0F2FE' },
-  thumbText: { color: '#475569', fontSize: 11, fontWeight: '700' },
-  thumbTextActive: { color: '#007ACC' },
-  viewerCol: { flex: 1 },
-  viewerCard: {
+  emptyIconContainer: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    backgroundColor: Colors.light.muted,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: Spacing.lg,
+  },
+  emptyTitle: {
+    color: Colors.light.textPrimary,
+    fontSize: 20,
+    fontWeight: '700',
+    marginBottom: Spacing.sm,
+  },
+  emptySubtitle: {
+    color: Colors.light.textSecondary,
+    fontSize: 14,
+    textAlign: 'center',
+    marginBottom: Spacing.xl,
+    lineHeight: 20,
+  },
+  emptyCtaButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    borderWidth: 2,
+    borderColor: Colors.primary,
+    borderRadius: Radius.full,
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.md,
+  },
+  emptyCtaText: {
+    color: Colors.primary,
+    fontSize: 15,
+    fontWeight: '600',
+  },
+
+  // Page indicator
+  pageIndicatorPill: {
+    position: 'absolute',
+    bottom: Spacing.lg,
+    alignSelf: 'center',
+    backgroundColor: 'rgba(26, 58, 107, 0.9)',
+    borderRadius: Radius.full,
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.sm,
+  },
+  pageIndicatorText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+
+  // Toolbar styles
+  toolbar: {
+    backgroundColor: Colors.light.surface,
+    borderTopWidth: 1,
+    borderTopColor: Colors.light.border,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    paddingBottom: Spacing.md,
+    ...Shadows.card,
+  },
+  toolbarRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+  },
+  toolBtn: {
+    padding: Spacing.sm,
+    borderRadius: Radius.sm,
+  },
+  toolbarDivider: {
+    width: 1,
+    height: 20,
+    backgroundColor: Colors.light.border,
+    marginHorizontal: Spacing.sm,
+  },
+  displayModeBtn: {
+    padding: Spacing.sm,
+    borderRadius: Radius.sm,
+    backgroundColor: Colors.light.muted,
+  },
+  displayModeBtnActive: {
+    backgroundColor: Colors.primaryLight,
+  },
+  toolbarSpacer: {
+    flex: 1,
+  },
+
+  // Zoom controls
+  zoomControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.light.muted,
+    borderRadius: Radius.lg,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: Spacing.xs,
+  },
+  zoomBtn: {
+    padding: Spacing.xs,
+    paddingHorizontal: Spacing.sm,
+  },
+  zoomBtnText: {
+    color: Colors.light.textSecondary,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  zoomText: {
+    color: Colors.light.textPrimary,
+    fontSize: 13,
+    fontWeight: '700',
+    minWidth: 45,
+    textAlign: 'center',
+  },
+  zoomDivider: {
+    width: 1,
+    height: 16,
+    backgroundColor: Colors.light.border,
+    marginHorizontal: Spacing.xs,
+  },
+
+  // TOC button
+  tocBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+    backgroundColor: Colors.light.muted,
+    borderRadius: Radius.lg,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+  },
+  tocBtnText: {
+    color: Colors.primary,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+
+  // Open outside button (ghost style)
+  openOutsideBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+    borderWidth: 1,
+    borderColor: Colors.primary,
+    borderRadius: Radius.lg,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+  },
+  openOutsideText: {
+    color: Colors.primary,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+
+  // Bottom sheet
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: '#000000',
+    zIndex: 100,
+  },
+  bottomSheet: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: Colors.light.surface,
+    borderTopLeftRadius: Radius.xl,
+    borderTopRightRadius: Radius.xl,
+    maxHeight: SCREEN_HEIGHT * 0.7,
+    zIndex: 101,
+    ...Shadows.card,
+  },
+  sheetHandle: {
+    width: 36,
+    height: 5,
+    backgroundColor: Colors.light.border,
+    borderRadius: 3,
+    alignSelf: 'center',
+    marginTop: Spacing.sm,
+    marginBottom: Spacing.sm,
+  },
+  sheetTabs: {
+    flexDirection: 'row',
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.light.border,
+    paddingHorizontal: Spacing.md,
+  },
+  sheetTab: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.lg,
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+  },
+  sheetTabActive: {
+    borderBottomColor: Colors.primary,
+  },
+  sheetTabText: {
+    color: Colors.light.textSecondary,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  sheetTabTextActive: {
+    color: Colors.primary,
+  },
+  annotationBadge: {
+    backgroundColor: Colors.primary,
+    borderRadius: Radius.full,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    marginLeft: Spacing.xs,
+  },
+  annotationBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  sheetContent: {
+    flex: 1,
+    padding: Spacing.md,
+    maxHeight: SCREEN_HEIGHT * 0.5,
+  },
+
+  // TOC styles
+  tocItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: Spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.light.border,
+  },
+  tocItemText: {
+    color: Colors.light.textPrimary,
+    fontSize: 14,
+    fontWeight: '500',
+    flex: 1,
+  },
+  tocItemPage: {
+    color: Colors.light.textSecondary,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+
+  // Annotation styles
+  annotationInputRow: {
+    flexDirection: 'row',
+    gap: Spacing.sm,
+    marginBottom: Spacing.md,
+  },
+  annotationInput: {
     flex: 1,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
-    borderRadius: Radius.md,
-    overflow: 'hidden',
-    backgroundColor: '#FFFFFF',
-    ...Shadows.sm,
+    borderColor: Colors.light.border,
+    borderRadius: Radius.lg,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    color: Colors.light.textPrimary,
+    fontSize: 14,
+    backgroundColor: Colors.light.muted,
   },
-  webview: { flex: 1, backgroundColor: '#FFFFFF' },
-  emptyView: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  emptyText: { color: '#334155', fontSize: 13, fontWeight: '700', textAlign: 'center', marginTop: 8 },
-  emptyHint: { color: '#64748B', fontSize: 12, textAlign: 'center', marginTop: 4, paddingHorizontal: 16 },
-  fallbackOpenBtn: {
-    marginTop: 12,
-    backgroundColor: '#007ACC',
-    borderRadius: Radius.full,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-  },
-  fallbackOpenText: { color: '#FFFFFF', fontSize: 12, fontWeight: '700' },
-  footer: {
-    marginTop: 8,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    borderRadius: Radius.md,
-    padding: 8,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+  annotationAddBtn: {
+    backgroundColor: Colors.primary,
+    borderRadius: Radius.lg,
+    paddingHorizontal: Spacing.md,
     alignItems: 'center',
+    justifyContent: 'center',
   },
-  pageCtrl: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  pageText: { color: '#334155', fontSize: 12, fontWeight: '700' },
-  downloadBtn: {
+  annotationAddBtnDisabled: {
+    opacity: 0.5,
+  },
+  annotationFilter: {
+    borderWidth: 1,
+    borderColor: Colors.light.border,
+    borderRadius: Radius.md,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    color: Colors.light.textPrimary,
+    fontSize: 13,
+    backgroundColor: Colors.light.muted,
+    marginBottom: Spacing.md,
+  },
+  annotationItem: {
+    backgroundColor: Colors.light.muted,
+    borderRadius: Radius.md,
+    padding: Spacing.md,
+    marginBottom: Spacing.sm,
+  },
+  annotationText: {
+    color: Colors.light.textPrimary,
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  annotationMeta: {
+    color: Colors.light.textSecondary,
+    fontSize: 11,
+    marginTop: Spacing.xs,
+  },
+  teacherOnlyNote: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#007ACC',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: Radius.full,
-  },
-  downloadText: { color: '#FFFFFF', fontSize: 12, fontWeight: '700' },
-  sideCol: {
-    width: 220,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
+    gap: Spacing.xs,
+    backgroundColor: Colors.light.muted,
     borderRadius: Radius.md,
-    padding: 10,
-    ...Shadows.sm,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    marginBottom: Spacing.md,
   },
-  sideHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  sideTitle: { color: '#1E293B', fontSize: 12, fontWeight: '700' },
-  sideMuted: { color: '#64748B', fontSize: 11, marginTop: 6, marginBottom: 8 },
-  annHeaderRow: { marginTop: 6, marginBottom: 4 },
-  annInput: {
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    borderRadius: Radius.sm,
-    paddingHorizontal: 8,
-    paddingVertical: 6,
-    color: '#1E293B',
+  teacherOnlyNoteText: {
+    color: Colors.light.textSecondary,
     fontSize: 12,
-    marginBottom: 6,
-    backgroundColor: '#FFFFFF',
   },
-  annAddBtn: {
-    alignSelf: 'flex-start',
-    borderRadius: Radius.full,
-    backgroundColor: '#007ACC',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    marginBottom: 8,
+  noMatchText: {
+    color: Colors.light.textSecondary,
+    fontSize: 14,
+    textAlign: 'center',
+    marginTop: Spacing.lg,
   },
-  annAddText: { color: '#FFFFFF', fontSize: 11, fontWeight: '700' },
-  annItem: {
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    borderRadius: Radius.sm,
-    padding: 8,
-    marginBottom: 6,
-    backgroundColor: '#F8FAFC',
+
+  // Empty sheet state
+  emptySheetState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: Spacing.xxxl,
   },
-  annText: { color: '#334155', fontSize: 12, fontWeight: '600' },
-  annMeta: { color: '#64748B', fontSize: 10, marginTop: 2 },
+  emptySheetText: {
+    color: Colors.light.textPrimary,
+    fontSize: 16,
+    fontWeight: '600',
+    marginTop: Spacing.md,
+  },
+  emptySheetHint: {
+    color: Colors.light.textSecondary,
+    fontSize: 13,
+    marginTop: Spacing.xs,
+  },
 });
