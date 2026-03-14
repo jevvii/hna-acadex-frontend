@@ -897,17 +897,19 @@ export function CourseScreen() {
   };
 
   // Get attendance status for a student - uses pending status when no session is selected
-  const getCurrentAttendanceStatus = useCallback((studentId: string): AttendanceStatus => {
+  const getCurrentAttendanceStatus = useCallback((studentId: string): AttendanceStatus | 'unmarked' => {
     if (selectedRollCallSessionIndex >= 0 && selectedRollCallSessionIndex < attendanceSessions.length) {
       const session = attendanceSessions[selectedRollCallSessionIndex];
-      return getAttendanceStatus(session.id, studentId);
+      const status = attendanceRecordMap[`${session.id}:${studentId}`];
+      // Return 'unmarked' if no status exists, otherwise return the status
+      return status ? (status as AttendanceStatus) : 'unmarked';
     }
-    // No session selected - use pending status or default to 'Absent'
-    return pendingAttendanceStatus[studentId] || 'Absent';
+    // No session selected - use pending status or default to 'unmarked'
+    return pendingAttendanceStatus[studentId] || 'unmarked';
   }, [selectedRollCallSessionIndex, attendanceSessions, attendanceRecordMap, pendingAttendanceStatus]);
 
   // Toggle attendance status - updates pending when no session, server when session exists
-  const handleToggleAttendanceStatus = useCallback((studentId: string, currentStatus: AttendanceStatus) => {
+  const handleToggleAttendanceStatus = useCallback((studentId: string, currentStatus: AttendanceStatus | 'unmarked') => {
     const nextStatus = getNextStatus(currentStatus);
     if (selectedRollCallSessionIndex >= 0 && selectedRollCallSessionIndex < attendanceSessions.length) {
       // Session exists - update immediately on server

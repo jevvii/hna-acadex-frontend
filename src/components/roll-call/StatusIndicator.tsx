@@ -19,7 +19,7 @@ const STATUS_CONFIG: Record<AttendanceStatus | 'unmarked', { bg: string; border:
 };
 
 // Cycle for cycling through statuses (excludes 'unmarked' - unmarked only appears initially)
-const STATUS_CYCLE: AttendanceStatus[] = ['Present', 'Absent', 'Late', 'Excused'];
+const STATUS_CYCLE: AttendanceStatus[] = ['Present', 'Late', 'Excused', 'Absent'];
 
 export function getNextStatus(current: AttendanceStatus | 'unmarked'): AttendanceStatus {
   // If current is 'unmarked', start from Present
