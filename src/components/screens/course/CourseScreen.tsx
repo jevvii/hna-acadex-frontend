@@ -2009,39 +2009,38 @@ export function CourseScreen() {
                   onCalendar={() => setRollCallDatePickerVisible(true)}
                 />
 
-                {/* Bulk Actions */}
-                <BulkActions
-                  onMarkAllPresent={() => {
-                    if (selectedRollCallSessionIndex >= 0 && selectedRollCallSessionIndex < attendanceSessions.length) {
-                      const session = attendanceSessions[selectedRollCallSessionIndex];
-                      if (session) {
-                        updateAttendanceRecords(session.id, [], 'mark_all_present');
-                      }
-                    } else {
-                      // No session - mark all as present in pending status
-                      const allPresent: Record<string, AttendanceStatus> = {};
-                      attendanceStudents.forEach((stu) => {
-                        allPresent[stu.student_id] = 'Present';
-                      });
-                      setPendingAttendanceStatus(allPresent);
-                    }
-                  }}
-                  onUnmarkAll={() => {
-                    if (selectedRollCallSessionIndex >= 0 && selectedRollCallSessionIndex < attendanceSessions.length) {
-                      const session = attendanceSessions[selectedRollCallSessionIndex];
-                      if (session) {
-                        updateAttendanceRecords(session.id, [], 'clear_all');
-                      }
-                    } else {
-                      // No session - clear all pending statuses
-                      setPendingAttendanceStatus({});
-                    }
-                  }}
-                />
-
                 {rollCallViewMode === 'LIST' ? (
                   /* LIST View - Student Cards */
                   <ScrollView style={styles.studentList} contentContainerStyle={styles.studentListContent}>
+                    {/* Bulk Actions */}
+                    <BulkActions
+                      onMarkAllPresent={() => {
+                        if (selectedRollCallSessionIndex >= 0 && selectedRollCallSessionIndex < attendanceSessions.length) {
+                          const session = attendanceSessions[selectedRollCallSessionIndex];
+                          if (session) {
+                            updateAttendanceRecords(session.id, [], 'mark_all_present');
+                          }
+                        } else {
+                          // No session - mark all as present in pending status
+                          const allPresent: Record<string, AttendanceStatus> = {};
+                          attendanceStudents.forEach((stu) => {
+                            allPresent[stu.student_id] = 'Present';
+                          });
+                          setPendingAttendanceStatus(allPresent);
+                        }
+                      }}
+                      onUnmarkAll={() => {
+                        if (selectedRollCallSessionIndex >= 0 && selectedRollCallSessionIndex < attendanceSessions.length) {
+                          const session = attendanceSessions[selectedRollCallSessionIndex];
+                          if (session) {
+                            updateAttendanceRecords(session.id, [], 'clear_all');
+                          }
+                        } else {
+                          // No session - clear all pending statuses
+                          setPendingAttendanceStatus({});
+                        }
+                      }}
+                    />
                     {attendanceStudents.length === 0 ? (
                       <View style={styles.rollCallEmptyState}>
                         <Ionicons name="people-outline" size={48} color="#94A3B8" />
@@ -2164,26 +2163,6 @@ export function CourseScreen() {
                         ))}
                       </View>
                     </ScrollView>
-                    {/* Save Attendance Button for CLASS view */}
-                    <View style={styles.saveAttendanceBtnContainer}>
-                      <TouchableOpacity
-                        style={styles.saveAttendanceBtn}
-                        onPress={async () => {
-                          const existingSessionIndex = attendanceSessions.findIndex(
-                            (s) => new Date(s.date).toDateString() === rollCallDate.toDateString()
-                          );
-                          if (existingSessionIndex >= 0) {
-                            setSelectedRollCallSessionIndex(existingSessionIndex);
-                            Alert.alert('Success', 'Attendance session already exists for this date.');
-                          } else {
-                            await createQuickAttendanceSession(rollCallDate);
-                          }
-                        }}
-                      >
-                        <Ionicons name="save-outline" size={20} color="#FFFFFF" />
-                        <Text style={styles.saveAttendanceBtnText}>Save Attendance</Text>
-                      </TouchableOpacity>
-                    </View>
                   </>
                 )}
 
