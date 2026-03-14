@@ -2367,6 +2367,11 @@ export function CourseScreen() {
                   });
                   const closed = quizzes.filter(q => {
                     const isClosed = q.close_at && new Date(q.close_at) < now;
+                    if (canManage) {
+                      // Teachers see all closed quizzes regardless of attempts
+                      return isClosed;
+                    }
+                    // Students see closed quizzes where they have attempts
                     const hasAttempt = (q.my_attempt?.attempts_used || 0) > 0;
                     return isClosed && hasAttempt;
                   });
