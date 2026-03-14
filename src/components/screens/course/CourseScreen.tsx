@@ -71,8 +71,8 @@ type QuizActionConfig = {
 const TABS: { key: CourseTab; label: string; icon: string }[] = [
   { key: 'modules', label: 'Modules', icon: 'layers-outline' },
   { key: 'assignments', label: 'Assignments', icon: 'document-text-outline' },
-  { key: 'attendance', label: 'Attendance', icon: 'calendar-outline' },
   { key: 'quizzes', label: 'Quizzes', icon: 'help-circle-outline' },
+  { key: 'attendance', label: 'Attendance', icon: 'calendar-outline' },
   { key: 'grades', label: 'Grades', icon: 'stats-chart-outline' },
   { key: 'files', label: 'Files', icon: 'folder-outline' },
   { key: 'announcements', label: 'Announcements', icon: 'megaphone-outline' },
