@@ -15,18 +15,32 @@ import {
   Animated,
   Dimensions,
   ActivityIndicator,
+  TextInput,
+  KeyboardAvoidingView,
+  Keyboard,
+  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
+import * as ImagePicker from 'expo-image-picker';
+import * as DocumentPicker from 'expo-document-picker';
 import { WebView } from 'react-native-webview';
 import { useTheme } from '@/contexts/ThemeContext';
-import { Activity, Submission } from '@/types';
+import { Activity, Submission, ActivityComment } from '@/types';
+import { activityCommentsApi } from '@/services/activityComments';
 import { Colors, Spacing, Radius, Shadows } from '@/constants/colors';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatDate, resolveBackendFileUrl, isImageFile } from './utils';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 const MODAL_HEIGHT = SCREEN_HEIGHT * 0.7;
+
+interface SelectedAttachment {
+  uri: string;
+  name: string;
+  mimeType: string;
+  size?: number;
+}
 
 interface ActivitySubmissionScreenProps {
   activity?: Activity;
@@ -91,6 +105,122 @@ export function ActivitySubmissionScreen({
   const [showAttemptsDropdown, setShowAttemptsDropdown] = useState(false);
   const [previewLoading, setPreviewLoading] = useState(true);
   const [currentPreviewIndex, setCurrentPreviewIndex] = useState(0);
+
+  // Comments state
+  const [comments, setComments] = useState<ActivityComment[]>([]);
+  const [commentsLoading, setCommentsLoading] = useState(false);
+  const [commentText, setCommentText] = useState('');
+  const [submittingComment, setSubmittingComment] = useState(false);
+  const [selectedAttachments, setSelectedAttachments] = useState<SelectedAttachment[]>([]);
+
+  // Attachment picker handlers
+  const showAttachmentOptions = () => {
+    Alert.alert(
+      'Add Attachment',
+      'Choose a file type',
+      [
+        { text: 'Image', onPress: pickImage },
+        { text: 'Document', onPress: pickDocument },
+        { text: 'Cancel', style: 'cancel' },
+      ]
+    );
+  };
+
+  const pickImage = async () => {
+    const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permissionResult.granted) {
+      Alert.alert('Permission Required', 'Please grant gallery access to upload images.');
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      quality: 0.8,
+      allowsMultipleSelection: true,
+    });
+
+    if (!result.canceled && result.assets.length > 0) {
+      const newAttachments: SelectedAttachment[] = result.assets.map((asset) => ({
+        uri: asset.uri,
+        name: asset.fileName || `image-${Date.now()}.jpg`,
+        mimeType: asset.mimeType || 'image/jpeg',
+        size: (asset as any).fileSize,
+      }));
+      setSelectedAttachments((prev) => [...prev, ...newAttachments]);
+    }
+  };
+
+  const pickDocument = async () => {
+    const result = await DocumentPicker.getDocumentAsync({
+      type: '*/*',
+      multiple: true,
+    });
+
+    if (!result.canceled && result.assets.length > 0) {
+      const newAttachments: SelectedAttachment[] = result.assets.map((asset) => ({
+        uri: asset.uri,
+        name: asset.name,
+        mimeType: asset.mimeType || 'application/octet-stream',
+        size: asset.size,
+      }));
+      setSelectedAttachments((prev) => [...prev, ...newAttachments]);
+    }
+  };
+
+  const removeAttachment = (index: number) => {
+    setSelectedAttachments((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  // Fetch comments when activity changes
+  useEffect(() => {
+    const fetchComments = async () => {
+      if (!activity?.id) return;
+      setCommentsLoading(true);
+      try {
+        const data = await activityCommentsApi.getByActivity(activity.id);
+        setComments(data);
+      } catch (error) {
+        console.error('Error fetching comments:', error);
+      } finally {
+        setCommentsLoading(false);
+      }
+    };
+    fetchComments();
+  }, [activity?.id]);
+
+  // Submit a new comment
+  const handleSubmitComment = useCallback(async () => {
+    if ((!commentText.trim() && selectedAttachments.length === 0) || submittingComment) return;
+    if (!activity?.id) return;
+
+    setSubmittingComment(true);
+    try {
+      // Prepare files for upload
+      const files = selectedAttachments.map((att) => ({
+        uri: att.uri,
+        name: att.name,
+        type: att.mimeType,
+      }));
+
+      const newComment = await activityCommentsApi.create(
+        {
+          activity_id: activity.id,
+          content: commentText.trim() || undefined,
+        },
+        files.length > 0 ? files as any : undefined
+      );
+      if (newComment) {
+        setComments(prev => [newComment, ...prev]);
+        setCommentText('');
+        setSelectedAttachments([]);
+        Keyboard.dismiss();
+      }
+    } catch (error) {
+      console.error('Error submitting comment:', error);
+    } finally {
+      setSubmittingComment(false);
+    }
+  }, [activity?.id, commentText, submittingComment, selectedAttachments]);
 
   // Get submission data
   const submission = propSubmission || activity?.my_submission;
@@ -231,7 +361,7 @@ export function ActivitySubmissionScreen({
   // Modal content
   const renderModalContent = () => {
     const filesCount = resolvedFiles.length;
-    const commentsCount = feedback ? 1 : 0;
+    const commentsCount = (feedback ? 1 : 0) + comments.length;
     const rubricCount = activity?.points && activity.points > 0 ? 1 : 0;
 
     return (
@@ -285,184 +415,331 @@ export function ActivitySubmissionScreen({
         </View>
 
         {/* Tab Content */}
-        <ScrollView style={styles.modalContent} showsVerticalScrollIndicator={false}>
+        <View style={styles.modalContent}>
           {/* Files Tab */}
           {activeTab === 'files' && (
-            <View style={styles.tabSection}>
-              {resolvedFiles.length === 0 ? (
-                <View style={styles.emptyState}>
-                  <Ionicons name="document-outline" size={48} color={colors.mutedForeground} />
-                  <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-                    No files submitted
-                  </Text>
-                </View>
-              ) : (
-                resolvedFiles.map((file, index) => {
-                  const isImage = isImageFile(file.fileName);
-                  const previewable = isPreviewable(file.fileName);
+            <ScrollView style={styles.filesScroll} showsVerticalScrollIndicator={false}>
+              <View style={styles.tabSection}>
+                {resolvedFiles.length === 0 ? (
+                  <View style={styles.emptyState}>
+                    <Ionicons name="document-outline" size={48} color={colors.mutedForeground} />
+                    <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+                      No files submitted
+                    </Text>
+                  </View>
+                ) : (
+                  resolvedFiles.map((file, index) => {
+                    const isImage = isImageFile(file.fileName);
+                    const previewable = isPreviewable(file.fileName);
 
-                  return (
-                    <TouchableOpacity
-                      key={index}
-                      style={[
-                        styles.fileItem,
-                        { backgroundColor: colors.background, borderColor: colors.border },
-                        currentPreviewIndex === index && { borderColor: Colors.primary, borderWidth: 2 },
-                      ]}
-                      onPress={() => previewable && handleFileSelect(index)}
-                      activeOpacity={0.9}
-                    >
-                      <View style={styles.fileIcon}>
-                        <Ionicons
-                          name={getFileIcon(file.fileName) as any}
-                          size={28}
-                          color={Colors.primary}
-                        />
-                      </View>
-                      <View style={styles.fileInfo}>
-                        <Text
-                          style={[styles.fileName, { color: colors.textPrimary }]}
-                          numberOfLines={1}
-                        >
-                          {file.fileName}
-                        </Text>
-                        <Text style={[styles.fileType, { color: colors.textSecondary }]}>
-                          {getFileTypeLabel(file.fileName)}
-                        </Text>
-                      </View>
-                      {previewable && (
-                        <Ionicons name="eye" size={20} color={Colors.primary} />
-                      )}
-                    </TouchableOpacity>
-                  );
-                })
-              )}
-            </View>
+                    return (
+                      <TouchableOpacity
+                        key={index}
+                        style={[
+                          styles.fileItem,
+                          { backgroundColor: colors.background, borderColor: colors.border },
+                          currentPreviewIndex === index && { borderColor: Colors.primary, borderWidth: 2 },
+                        ]}
+                        onPress={() => previewable && handleFileSelect(index)}
+                        activeOpacity={0.9}
+                      >
+                        <View style={styles.fileIcon}>
+                          <Ionicons
+                            name={getFileIcon(file.fileName) as any}
+                            size={28}
+                            color={Colors.primary}
+                          />
+                        </View>
+                        <View style={styles.fileInfo}>
+                          <Text
+                            style={[styles.fileName, { color: colors.textPrimary }]}
+                            numberOfLines={1}
+                          >
+                            {file.fileName}
+                          </Text>
+                          <Text style={[styles.fileType, { color: colors.textSecondary }]}>
+                            {getFileTypeLabel(file.fileName)}
+                          </Text>
+                        </View>
+                        {previewable && (
+                          <Ionicons name="eye" size={20} color={Colors.primary} />
+                        )}
+                      </TouchableOpacity>
+                    );
+                  })
+                )}
+              </View>
+            </ScrollView>
           )}
 
           {/* Comments/Feedback Tab */}
           {activeTab === 'comments' && (
-            <View style={styles.tabSection}>
-              {!feedback ? (
-                <View style={styles.emptyState}>
-                  <Ionicons name="chatbubble-outline" size={48} color={colors.mutedForeground} />
-                  <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-                    No feedback yet
-                  </Text>
-                </View>
-              ) : (
+            <KeyboardAvoidingView
+              behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+              style={styles.commentsTabContainer}
+            >
+              {/* Comments List */}
+              <ScrollView
+                style={styles.commentsList}
+                contentContainerStyle={styles.commentsListContent}
+                showsVerticalScrollIndicator={false}
+              >
+                {commentsLoading ? (
+                  <View style={styles.emptyState}>
+                    <ActivityIndicator size="small" color={Colors.primary} />
+                    <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+                      Loading comments...
+                    </Text>
+                  </View>
+                ) : comments.length === 0 && !feedback ? (
+                  <View style={styles.emptyState}>
+                    <Ionicons name="chatbubble-outline" size={48} color={colors.mutedForeground} />
+                    <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+                      No comments yet
+                    </Text>
+                  </View>
+                ) : (
+                  <>
+                    {/* Teacher Feedback */}
+                    {feedback && (
+                      <View
+                        style={[
+                          styles.feedbackCard,
+                          { backgroundColor: colors.background, borderColor: colors.border },
+                        ]}
+                      >
+                        <View style={styles.feedbackHeader}>
+                          <View style={styles.feedbackAvatar}>
+                            <Text style={styles.feedbackAvatarText}>T</Text>
+                          </View>
+                          <View style={styles.feedbackMeta}>
+                            <Text style={[styles.feedbackAuthor, { color: colors.textPrimary }]}>
+                              Teacher Feedback
+                            </Text>
+                            <Text style={[styles.feedbackDate, { color: colors.textSecondary }]}>
+                              {formatDate(submittedAt)}
+                            </Text>
+                          </View>
+                        </View>
+                        <Text style={[styles.feedbackText, { color: colors.textPrimary }]}>
+                          {feedback}
+                        </Text>
+                      </View>
+                    )}
+                    {/* Student Comments */}
+                    {comments.map((comment) => (
+                      <View
+                        key={comment.id}
+                        style={[
+                          styles.commentCard,
+                          { backgroundColor: colors.background, borderColor: colors.border },
+                        ]}
+                      >
+                        <View style={styles.commentHeader}>
+                          <View style={styles.commentAvatar}>
+                            <Text style={styles.commentAvatarText}>
+                              {comment.author_name?.charAt(0)?.toUpperCase() || 'S'}
+                            </Text>
+                          </View>
+                          <View style={styles.commentMeta}>
+                            <Text style={[styles.commentAuthor, { color: colors.textPrimary }]}>
+                              {comment.author_name || 'Student'}
+                            </Text>
+                            <Text style={[styles.commentDate, { color: colors.textSecondary }]}>
+                              {formatDate(comment.created_at)}
+                            </Text>
+                          </View>
+                        </View>
+                        {comment.content && (
+                          <Text style={[styles.commentText, { color: colors.textPrimary }]}>
+                            {comment.content}
+                          </Text>
+                        )}
+                        {comment.file_urls && comment.file_urls.length > 0 && (
+                          <View style={styles.commentFiles}>
+                            {comment.file_urls.map((url, idx) => (
+                              <TouchableOpacity
+                                key={idx}
+                                style={styles.commentFileLink}
+                                onPress={() => {
+                                  // Open file in browser or preview
+                                }}
+                              >
+                                <Ionicons name="document-attach" size={14} color={Colors.primary} />
+                                <Text style={styles.commentFileText}>
+                                  {url.split('/').pop()}
+                                </Text>
+                              </TouchableOpacity>
+                            ))}
+                          </View>
+                        )}
+                      </View>
+                    ))}
+                  </>
+                )}
+              </ScrollView>
+
+              {/* Comment Input - Fixed at bottom */}
+              {!isTeacher && (
                 <View
                   style={[
-                    styles.feedbackCard,
-                    { backgroundColor: colors.background, borderColor: colors.border },
+                    styles.commentInputContainer,
+                    { backgroundColor: colors.surface, borderTopColor: colors.border },
                   ]}
                 >
-                  <View style={styles.feedbackHeader}>
-                    <View style={styles.feedbackAvatar}>
-                      <Text style={styles.feedbackAvatarText}>T</Text>
-                    </View>
-                    <View style={styles.feedbackMeta}>
-                      <Text style={[styles.feedbackAuthor, { color: colors.textPrimary }]}>
-                        Teacher Feedback
-                      </Text>
-                      <Text style={[styles.feedbackDate, { color: colors.textSecondary }]}>
-                        {formatDate(submittedAt)}
-                      </Text>
-                    </View>
+                  {/* Selected Attachments Preview */}
+                  {selectedAttachments.length > 0 && (
+                    <ScrollView
+                      horizontal
+                      style={styles.attachmentsPreview}
+                      contentContainerStyle={styles.attachmentsPreviewContent}
+                      showsHorizontalScrollIndicator={false}
+                    >
+                      {selectedAttachments.map((att, idx) => (
+                        <View
+                          key={idx}
+                          style={[styles.attachmentPreviewItem, { backgroundColor: colors.background, borderColor: colors.border }]}
+                        >
+                          <Ionicons
+                            name={isImageFile(att.name) ? 'image' : 'document'}
+                            size={14}
+                            color={Colors.primary}
+                          />
+                          <Text style={styles.attachmentPreviewName} numberOfLines={1}>
+                            {att.name}
+                          </Text>
+                          <TouchableOpacity
+                            style={styles.attachmentRemoveBtn}
+                            onPress={() => removeAttachment(idx)}
+                          >
+                            <Ionicons name="close-circle" size={16} color={colors.textSecondary} />
+                          </TouchableOpacity>
+                        </View>
+                      ))}
+                    </ScrollView>
+                  )}
+                  <View style={styles.inputRow}>
+                    <TouchableOpacity
+                      style={styles.attachButton}
+                      onPress={showAttachmentOptions}
+                    >
+                      <Ionicons name="add-circle-outline" size={24} color={Colors.primary} />
+                    </TouchableOpacity>
+                    <TextInput
+                      style={[styles.commentInput, { backgroundColor: colors.background, color: colors.textPrimary }]}
+                      placeholder="Add a comment..."
+                      placeholderTextColor={colors.textSecondary}
+                      value={commentText}
+                      onChangeText={setCommentText}
+                      multiline
+                      maxLength={1000}
+                    />
+                    <TouchableOpacity
+                      style={[
+                        styles.sendButton,
+                        (!commentText.trim() && selectedAttachments.length === 0) && styles.sendButtonDisabled,
+                        submittingComment && styles.sendButtonDisabled,
+                      ]}
+                      onPress={handleSubmitComment}
+                      disabled={(!commentText.trim() && selectedAttachments.length === 0) || submittingComment}
+                    >
+                      <Ionicons
+                        name="send"
+                        size={20}
+                        color={(!commentText.trim() && selectedAttachments.length === 0) || submittingComment ? colors.mutedForeground : '#FFFFFF'}
+                      />
+                    </TouchableOpacity>
                   </View>
-                  <Text style={[styles.feedbackText, { color: colors.textPrimary }]}>
-                    {feedback}
-                  </Text>
                 </View>
               )}
-            </View>
+            </KeyboardAvoidingView>
           )}
 
           {/* Rubric Tab */}
           {activeTab === 'rubric' && (
-            <View style={styles.tabSection}>
-              {!activity?.points ? (
-                <View style={styles.emptyState}>
-                  <Ionicons name="list-outline" size={48} color={colors.mutedForeground} />
-                  <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-                    No rubric available
-                  </Text>
-                </View>
-              ) : (
-                <View
-                  style={[
-                    styles.rubricCard,
-                    { backgroundColor: colors.background, borderColor: colors.border },
-                  ]}
-                >
-                  <View style={styles.rubricHeader}>
-                    <Text style={[styles.rubricTitle, { color: colors.textPrimary }]}>
-                      Grade
-                    </Text>
-                    <Text style={[styles.rubricScore, { color: Colors.primary }]}>
-                      {score !== undefined && score !== null ? score : '-'} / {activity.points} pts
+            <ScrollView style={styles.rubricScroll} showsVerticalScrollIndicator={false}>
+              <View style={styles.tabSection}>
+                {!activity?.points ? (
+                  <View style={styles.emptyState}>
+                    <Ionicons name="list-outline" size={48} color={colors.mutedForeground} />
+                    <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+                      No rubric available
                     </Text>
                   </View>
-
-                  {score !== undefined && score !== null && (
-                    <View style={styles.scoreBarContainer}>
-                      <View style={[styles.scoreBar, { backgroundColor: colors.border }]}>
-                        <View
-                          style={[
-                            styles.scoreBarFill,
-                            {
-                              backgroundColor: Colors.primary,
-                              width: `${Math.min((score / activity.points) * 100, 100)}%`,
-                            },
-                          ]}
-                        />
-                      </View>
-                      <Text style={[styles.scorePercentage, { color: colors.textSecondary }]}>
-                        {Math.round((score / activity.points) * 100)}%
+                ) : (
+                  <View
+                    style={[
+                      styles.rubricCard,
+                      { backgroundColor: colors.background, borderColor: colors.border },
+                    ]}
+                  >
+                    <View style={styles.rubricHeader}>
+                      <Text style={[styles.rubricTitle, { color: colors.textPrimary }]}>
+                        Grade
+                      </Text>
+                      <Text style={[styles.rubricScore, { color: Colors.primary }]}>
+                        {score !== undefined && score !== null ? score : '-'} / {activity.points} pts
                       </Text>
                     </View>
-                  )}
 
-                  {activity.class_stats && (
-                    <View style={[styles.classStats, { borderTopColor: colors.border }]}>
-                      <Text style={[styles.classStatsTitle, { color: colors.textSecondary }]}>
-                        Class Statistics
-                      </Text>
-                      <View style={styles.statsRow}>
-                        <View style={styles.statItem}>
-                          <Text style={[styles.statValue, { color: colors.textPrimary }]}>
-                            {activity.class_stats.highest_score ?? '-'}
-                          </Text>
-                          <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
-                            High
-                          </Text>
+                    {score !== undefined && score !== null && (
+                      <View style={styles.scoreBarContainer}>
+                        <View style={[styles.scoreBar, { backgroundColor: colors.border }]}>
+                          <View
+                            style={[
+                              styles.scoreBarFill,
+                              {
+                                backgroundColor: Colors.primary,
+                                width: `${Math.min((score / activity.points) * 100, 100)}%`,
+                              },
+                            ]}
+                          />
                         </View>
-                        <View style={styles.statItem}>
-                          <Text style={[styles.statValue, { color: colors.textPrimary }]}>
-                            {activity.class_stats.average_score?.toFixed(1) ?? '-'}
-                          </Text>
-                          <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
-                            Avg
-                          </Text>
-                        </View>
-                        <View style={styles.statItem}>
-                          <Text style={[styles.statValue, { color: colors.textPrimary }]}>
-                            {activity.class_stats.lowest_score ?? '-'}
-                          </Text>
-                          <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
-                            Low
-                          </Text>
+                        <Text style={[styles.scorePercentage, { color: colors.textSecondary }]}>
+                          {Math.round((score / activity.points) * 100)}%
+                        </Text>
+                      </View>
+                    )}
+
+                    {activity.class_stats && (
+                      <View style={[styles.classStats, { borderTopColor: colors.border }]}>
+                        <Text style={[styles.classStatsTitle, { color: colors.textSecondary }]}>
+                          Class Statistics
+                        </Text>
+                        <View style={styles.statsRow}>
+                          <View style={styles.statItem}>
+                            <Text style={[styles.statValue, { color: colors.textPrimary }]}>
+                              {activity.class_stats.highest_score ?? '-'}
+                            </Text>
+                            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
+                              High
+                            </Text>
+                          </View>
+                          <View style={styles.statItem}>
+                            <Text style={[styles.statValue, { color: colors.textPrimary }]}>
+                              {activity.class_stats.average_score?.toFixed(1) ?? '-'}
+                            </Text>
+                            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
+                              Avg
+                            </Text>
+                          </View>
+                          <View style={styles.statItem}>
+                            <Text style={[styles.statValue, { color: colors.textPrimary }]}>
+                              {activity.class_stats.lowest_score ?? '-'}
+                            </Text>
+                            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
+                              Low
+                            </Text>
+                          </View>
                         </View>
                       </View>
-                    </View>
-                  )}
-                </View>
-              )}
-            </View>
+                    )}
+                  </View>
+                )}
+              </View>
+            </ScrollView>
           )}
-
-          <View style={{ height: 40 }} />
-        </ScrollView>
+        </View>
       </Animated.View>
     );
   };
@@ -470,7 +747,7 @@ export function ActivitySubmissionScreen({
   // Render bottom tab buttons
   const renderBottomTab = (tab: TabType) => {
     const filesCount = resolvedFiles.length;
-    const commentsCount = feedback ? 1 : 0;
+    const commentsCount = (feedback ? 1 : 0) + comments.length;
     const rubricCount = activity?.points && activity.points > 0 ? 1 : 0;
     const count = tab === 'files' ? filesCount : tab === 'comments' ? commentsCount : rubricCount;
 
@@ -739,8 +1016,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.lg,
     paddingTop: Spacing.lg,
   },
+  filesScroll: {
+    flex: 1,
+  },
+  rubricScroll: {
+    flex: 1,
+  },
   tabSection: {
     gap: Spacing.md,
+    paddingBottom: Spacing.xxl,
   },
   fileItem: {
     flexDirection: 'row',
@@ -879,6 +1163,133 @@ const styles = StyleSheet.create({
   statLabel: {
     fontSize: 12,
     marginTop: 4,
+  },
+  // Comments styles
+  commentsTabContainer: {
+    flex: 1,
+  },
+  commentsList: {
+    flex: 1,
+  },
+  commentsListContent: {
+    gap: Spacing.md,
+    paddingBottom: Spacing.md,
+  },
+  commentCard: {
+    padding: Spacing.lg,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+  },
+  commentHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: Spacing.sm,
+  },
+  commentAvatar: {
+    width: 36,
+    height: 36,
+    borderRadius: Radius.full,
+    backgroundColor: Colors.primary + '30',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: Spacing.sm,
+  },
+  commentAvatarText: {
+    color: Colors.primary,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  commentMeta: {
+    flex: 1,
+  },
+  commentAuthor: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  commentDate: {
+    fontSize: 11,
+    marginTop: 2,
+  },
+  commentText: {
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  commentFiles: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.sm,
+    marginTop: Spacing.sm,
+  },
+  commentFileLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+    paddingVertical: Spacing.xs,
+    paddingHorizontal: Spacing.sm,
+    backgroundColor: Colors.primary + '15',
+    borderRadius: Radius.sm,
+  },
+  commentFileText: {
+    fontSize: 12,
+    color: Colors.primary,
+  },
+  commentInputContainer: {
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    borderTopWidth: 1,
+  },
+  attachmentsPreview: {
+    maxHeight: 60,
+    marginBottom: Spacing.xs,
+  },
+  attachmentsPreviewContent: {
+    gap: Spacing.xs,
+  },
+  attachmentPreviewItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: Spacing.xs,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    maxWidth: 150,
+  },
+  attachmentPreviewName: {
+    fontSize: 12,
+    color: '#333',
+    flex: 1,
+  },
+  attachmentRemoveBtn: {
+    padding: 2,
+  },
+  inputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  attachButton: {
+    padding: Spacing.xs,
+    marginRight: Spacing.xs,
+  },
+  commentInput: {
+    flex: 1,
+    minHeight: 40,
+    maxHeight: 100,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: 'transparent',
+    fontSize: 14,
+  },
+  sendButton: {
+    marginLeft: Spacing.sm,
+    padding: Spacing.sm,
+    backgroundColor: Colors.primary,
+    borderRadius: Radius.full,
+  },
+  sendButtonDisabled: {
+    backgroundColor: 'transparent',
   },
 });
 
