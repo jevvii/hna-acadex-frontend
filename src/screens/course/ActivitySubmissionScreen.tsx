@@ -66,6 +66,39 @@ const getFileIcon = (fileName: string): string => {
   return 'document-attach';
 };
 
+// Messaging style file icon (for bubble style)
+const getFileIconOutline = (fileName: string): string => {
+  const ext = fileName.split('.').pop()?.toLowerCase() || '';
+  if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'heic'].includes(ext)) return 'image-outline';
+  if (['pdf'].includes(ext)) return 'document-outline';
+  return 'document-text-outline';
+};
+
+// Group comments by date
+const groupCommentsByDate = (comments: ActivityComment[]): { date: string; comments: ActivityComment[] }[] => {
+  const groups: { [key: string]: ActivityComment[] } = {};
+
+  comments.forEach(comment => {
+    const date = new Date(comment.created_at);
+    const dateKey = date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+
+    if (!groups[dateKey]) {
+      groups[dateKey] = [];
+    }
+    groups[dateKey].push(comment);
+  });
+
+  return Object.entries(groups).map(([date, comments]) => ({ date, comments }));
+};
+
+// Check if comments are within 1 minute of each other
+const shouldGroupTimestamps = (current: ActivityComment, previous: ActivityComment | null): boolean => {
+  if (!previous) return false;
+  const currentTime = new Date(current.created_at).getTime();
+  const previousTime = new Date(previous.created_at).getTime();
+  return Math.abs(currentTime - previousTime) <= 60000; // 1 minute in milliseconds
+};
+
 const isPdfFile = (fileName: string): boolean => {
   const ext = fileName.split('.').pop()?.toLowerCase() || '';
   return ext === 'pdf';
@@ -383,7 +416,7 @@ export function ActivitySubmissionScreen({
         </View>
 
         {/* Tab Buttons */}
-        <View style={[styles.tabButtons, { borderBottomColor: colors.border }]}>
+        <View style={[styles.tabButtons, { borderBottomColor: colors.border, backgroundColor: colors.surface }]}>
           {(['files', 'comments', 'rubric'] as TabType[]).map((tab) => {
             const isActive = activeTab === tab;
             const count = tab === 'files' ? filesCount : tab === 'comments' ? commentsCount : rubricCount;
@@ -415,7 +448,10 @@ export function ActivitySubmissionScreen({
         </View>
 
         {/* Tab Content */}
-        <View style={styles.modalContent}>
+        <View style={[
+          styles.modalContent,
+          activeTab === 'comments' && styles.modalContentComments,
+        ]}>
           {/* Files Tab */}
           {activeTab === 'files' && (
             <ScrollView style={styles.filesScroll} showsVerticalScrollIndicator={false}>
@@ -472,119 +508,129 @@ export function ActivitySubmissionScreen({
             </ScrollView>
           )}
 
-          {/* Comments/Feedback Tab */}
+          {/* Comments/Feedback Tab - Modern Messaging Style */}
           {activeTab === 'comments' && (
             <KeyboardAvoidingView
               behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-              style={styles.commentsTabContainer}
+              style={styles.messagesTabContainer}
             >
-              {/* Comments List */}
+              {/* Messages List */}
               <ScrollView
-                style={styles.commentsList}
-                contentContainerStyle={styles.commentsListContent}
+                style={styles.messagesList}
+                contentContainerStyle={styles.messagesListContent}
                 showsVerticalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
               >
                 {commentsLoading ? (
                   <View style={styles.emptyState}>
                     <ActivityIndicator size="small" color={Colors.primary} />
                     <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-                      Loading comments...
+                      Loading messages...
                     </Text>
                   </View>
                 ) : comments.length === 0 && !feedback ? (
-                  <View style={styles.emptyState}>
-                    <Ionicons name="chatbubble-outline" size={48} color={colors.mutedForeground} />
-                    <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-                      No comments yet
+                  <View style={styles.messagesEmptyState}>
+                    <Ionicons name="chatbubbles-outline" size={64} color={Colors.primary} style={{ opacity: 0.2 }} />
+                    <Text style={styles.messagesEmptyPrimaryText}>No messages yet</Text>
+                    <Text style={styles.messagesEmptySecondaryText}>
+                      Be the first to leave a comment on this submission.
                     </Text>
                   </View>
                 ) : (
                   <>
-                    {/* Teacher Feedback */}
+                    {/* Teacher Feedback - Incoming Message Style */}
                     {feedback && (
-                      <View
-                        style={[
-                          styles.feedbackCard,
-                          { backgroundColor: colors.background, borderColor: colors.border },
-                        ]}
-                      >
-                        <View style={styles.feedbackHeader}>
-                          <View style={styles.feedbackAvatar}>
-                            <Text style={styles.feedbackAvatarText}>T</Text>
+                      <View style={styles.messageGroup}>
+                        <View style={styles.messageRowIncoming}>
+                          <View style={styles.avatarContainer}>
+                            <View style={styles.avatar}>
+                              <Text style={styles.avatarText}>T</Text>
+                            </View>
                           </View>
-                          <View style={styles.feedbackMeta}>
-                            <Text style={[styles.feedbackAuthor, { color: colors.textPrimary }]}>
-                              Teacher Feedback
-                            </Text>
-                            <Text style={[styles.feedbackDate, { color: colors.textSecondary }]}>
+                          <View style={styles.messageContentIncoming}>
+                            <Text style={styles.authorNameIncoming}>Teacher</Text>
+                            <View style={styles.messageBubbleIncoming}>
+                              <Text style={styles.messageTextIncoming}>{feedback}</Text>
+                            </View>
+                            <Text style={styles.messageTimestampIncoming}>
                               {formatDate(submittedAt)}
                             </Text>
                           </View>
                         </View>
-                        <Text style={[styles.feedbackText, { color: colors.textPrimary }]}>
-                          {feedback}
-                        </Text>
                       </View>
                     )}
-                    {/* Student Comments */}
-                    {comments.map((comment) => (
-                      <View
-                        key={comment.id}
-                        style={[
-                          styles.commentCard,
-                          { backgroundColor: colors.background, borderColor: colors.border },
-                        ]}
-                      >
-                        <View style={styles.commentHeader}>
-                          <View style={styles.commentAvatar}>
-                            <Text style={styles.commentAvatarText}>
-                              {comment.author_name?.charAt(0)?.toUpperCase() || 'S'}
-                            </Text>
-                          </View>
-                          <View style={styles.commentMeta}>
-                            <Text style={[styles.commentAuthor, { color: colors.textPrimary }]}>
-                              {comment.author_name || 'Student'}
-                            </Text>
-                            <Text style={[styles.commentDate, { color: colors.textSecondary }]}>
-                              {formatDate(comment.created_at)}
-                            </Text>
-                          </View>
+
+                    {/* Comments Grouped by Date */}
+                    {groupCommentsByDate(comments).map((group) => (
+                      <View key={group.date} style={styles.dateGroup}>
+                        {/* Date Separator */}
+                        <View style={styles.dateSeparator}>
+                          <Text style={styles.dateSeparatorText}>{group.date}</Text>
                         </View>
-                        {comment.content && (
-                          <Text style={[styles.commentText, { color: colors.textPrimary }]}>
-                            {comment.content}
-                          </Text>
-                        )}
-                        {comment.file_urls && comment.file_urls.length > 0 && (
-                          <View style={styles.commentFiles}>
-                            {comment.file_urls.map((url, idx) => (
-                              <TouchableOpacity
-                                key={idx}
-                                style={styles.commentFileLink}
-                                onPress={() => {
-                                  // Open file in browser or preview
-                                }}
-                              >
-                                <Ionicons name="document-attach" size={14} color={Colors.primary} />
-                                <Text style={styles.commentFileText}>
-                                  {url.split('/').pop()}
-                                </Text>
-                              </TouchableOpacity>
-                            ))}
-                          </View>
-                        )}
+
+                        {/* Messages in this date group */}
+                        {group.comments.map((comment, commentIndex) => {
+                          const prevComment = commentIndex > 0 ? group.comments[commentIndex - 1] : null;
+                          const showTimestamp = !shouldGroupTimestamps(comment, prevComment);
+                          const hasContent = comment.content && comment.content.trim().length > 0;
+                          const hasFiles = comment.file_urls && comment.file_urls.length > 0;
+
+                          // All current messages are from current user (outgoing style)
+                          return (
+                            <View key={comment.id} style={styles.messageRowOutgoing}>
+                              <View style={styles.messageContentOutgoing}>
+                                {/* Message bubbles */}
+                                {hasContent && (
+                                  <View style={styles.messageBubbleOutgoing}>
+                                    <Text style={styles.messageTextOutgoing}>{comment.content}</Text>
+                                  </View>
+                                )}
+
+                                {/* File Attachments */}
+                                {hasFiles && comment.file_urls!.map((url, idx) => {
+                                  const fileName = url.split('/').pop() || 'file';
+                                  return (
+                                    <TouchableOpacity
+                                      key={idx}
+                                      style={styles.fileBubbleOutgoing}
+                                      onPress={() => {
+                                        // TODO: Open file preview
+                                      }}
+                                    >
+                                      <Ionicons
+                                        name={getFileIconOutline(fileName) as any}
+                                        size={20}
+                                        color="#FFFFFF"
+                                      />
+                                      <Text style={styles.fileNameOutgoing} numberOfLines={2}>
+                                        {fileName}
+                                      </Text>
+                                    </TouchableOpacity>
+                                  );
+                                })}
+
+                                {/* Timestamp - only show if not grouped */}
+                                {showTimestamp && (
+                                  <Text style={styles.messageTimestampOutgoing}>
+                                    {formatDate(comment.created_at)}
+                                  </Text>
+                                )}
+                              </View>
+                            </View>
+                          );
+                        })}
                       </View>
                     ))}
                   </>
                 )}
               </ScrollView>
 
-              {/* Comment Input - Fixed at bottom */}
+              {/* Composer Bar */}
               {!isTeacher && (
                 <View
                   style={[
-                    styles.commentInputContainer,
-                    { backgroundColor: colors.surface, borderTopColor: colors.border },
+                    styles.composerBar,
+                    { backgroundColor: '#FFFFFF', borderTopColor: '#E0E0E0' },
                   ]}
                 >
                   {/* Selected Attachments Preview */}
@@ -598,10 +644,10 @@ export function ActivitySubmissionScreen({
                       {selectedAttachments.map((att, idx) => (
                         <View
                           key={idx}
-                          style={[styles.attachmentPreviewItem, { backgroundColor: colors.background, borderColor: colors.border }]}
+                          style={[styles.attachmentPreviewItem, { backgroundColor: '#F0F2F5', borderColor: colors.border }]}
                         >
                           <Ionicons
-                            name={isImageFile(att.name) ? 'image' : 'document'}
+                            name={isImageFile(att.name) ? 'image-outline' : 'document-text-outline'}
                             size={14}
                             color={Colors.primary}
                           />
@@ -618,17 +664,18 @@ export function ActivitySubmissionScreen({
                       ))}
                     </ScrollView>
                   )}
-                  <View style={styles.inputRow}>
+
+                  <View style={styles.composerRow}>
                     <TouchableOpacity
-                      style={styles.attachButton}
+                      style={styles.attachButtonNew}
                       onPress={showAttachmentOptions}
                     >
-                      <Ionicons name="add-circle-outline" size={24} color={Colors.primary} />
+                      <Ionicons name="add-circle-outline" size={28} color={Colors.primary} />
                     </TouchableOpacity>
                     <TextInput
-                      style={[styles.commentInput, { backgroundColor: colors.background, color: colors.textPrimary }]}
+                      style={styles.composerInput}
                       placeholder="Add a comment..."
-                      placeholderTextColor={colors.textSecondary}
+                      placeholderTextColor="#AAAAAA"
                       value={commentText}
                       onChangeText={setCommentText}
                       multiline
@@ -636,17 +683,16 @@ export function ActivitySubmissionScreen({
                     />
                     <TouchableOpacity
                       style={[
-                        styles.sendButton,
-                        (!commentText.trim() && selectedAttachments.length === 0) && styles.sendButtonDisabled,
-                        submittingComment && styles.sendButtonDisabled,
+                        styles.sendButtonNew,
+                        (!commentText.trim() && selectedAttachments.length === 0) && styles.sendButtonNewDisabled,
                       ]}
                       onPress={handleSubmitComment}
                       disabled={(!commentText.trim() && selectedAttachments.length === 0) || submittingComment}
                     >
                       <Ionicons
                         name="send"
-                        size={20}
-                        color={(!commentText.trim() && selectedAttachments.length === 0) || submittingComment ? colors.mutedForeground : '#FFFFFF'}
+                        size={22}
+                        color={(!commentText.trim() && selectedAttachments.length === 0) || submittingComment ? '#CCCCCC' : Colors.primary}
                       />
                     </TouchableOpacity>
                   </View>
@@ -826,13 +872,9 @@ export function ActivitySubmissionScreen({
           animationType="none"
           onRequestClose={closeModal}
         >
-          <TouchableOpacity
-            style={styles.modalOverlay}
-            activeOpacity={1}
-            onPress={closeModal}
-          >
+          <View style={styles.modalOverlay}>
             {renderModalContent()}
-          </TouchableOpacity>
+          </View>
         </Modal>
       )}
     </SafeAreaView>
@@ -1015,6 +1057,10 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingHorizontal: Spacing.lg,
     paddingTop: Spacing.lg,
+  },
+  modalContentComments: {
+    paddingHorizontal: 0,
+    paddingTop: 0,
   },
   filesScroll: {
     flex: 1,
@@ -1237,6 +1283,195 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.md,
     paddingVertical: Spacing.sm,
     borderTopWidth: 1,
+  },
+  // Modern Messaging Styles
+  messagesTabContainer: {
+    flex: 1,
+    backgroundColor: '#F5F7FA',
+  },
+  messagesList: {
+    flex: 1,
+    backgroundColor: '#F5F7FA',
+  },
+  messagesListContent: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    flexGrow: 1,
+  },
+  messagesEmptyState: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 60,
+  },
+  messagesEmptyPrimaryText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#555555',
+    marginTop: 16,
+  },
+  messagesEmptySecondaryText: {
+    fontSize: 13,
+    color: '#AAAAAA',
+    marginTop: 8,
+    textAlign: 'center',
+    paddingHorizontal: 32,
+  },
+  messageGroup: {
+    marginBottom: 12,
+  },
+  dateGroup: {
+    marginBottom: 16,
+  },
+  dateSeparator: {
+    alignItems: 'center',
+    marginVertical: 16,
+  },
+  dateSeparatorText: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#AAAAAA',
+    backgroundColor: '#E8EDF5',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
+  },
+  // Incoming message styles (Teacher feedback)
+  messageRowIncoming: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 4,
+  },
+  avatarContainer: {
+    marginRight: 8,
+  },
+  avatar: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: Colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  messageContentIncoming: {
+    flex: 1,
+    maxWidth: '75%',
+  },
+  authorNameIncoming: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#2E5FA3',
+    marginBottom: 4,
+    marginLeft: 2,
+  },
+  messageBubbleIncoming: {
+    backgroundColor: '#F0F0F0',
+    borderTopLeftRadius: 4,
+    borderTopRightRadius: 18,
+    borderBottomLeftRadius: 18,
+    borderBottomRightRadius: 18,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    alignSelf: 'flex-start',
+  },
+  messageTextIncoming: {
+    fontSize: 15,
+    lineHeight: 20,
+    color: '#1A1A1A',
+  },
+  messageTimestampIncoming: {
+    fontSize: 11,
+    color: '#AAAAAA',
+    marginTop: 4,
+    marginLeft: 4,
+  },
+  // Outgoing message styles (Student comments)
+  messageRowOutgoing: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    marginBottom: 4,
+  },
+  messageContentOutgoing: {
+    alignItems: 'flex-end',
+    maxWidth: '75%',
+  },
+  messageBubbleOutgoing: {
+    backgroundColor: '#1A3A6B',
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+    borderBottomLeftRadius: 18,
+    borderBottomRightRadius: 4,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    maxWidth: '100%',
+  },
+  messageTextOutgoing: {
+    fontSize: 15,
+    lineHeight: 20,
+    color: '#FFFFFF',
+  },
+  messageTimestampOutgoing: {
+    fontSize: 11,
+    color: '#AAAAAA',
+    marginTop: 4,
+    marginRight: 4,
+    textAlign: 'right',
+  },
+  // File bubble styles
+  fileBubbleOutgoing: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#2E5FA3',
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginTop: 4,
+    maxWidth: '100%',
+  },
+  fileNameOutgoing: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#FFFFFF',
+    marginLeft: 8,
+    flex: 1,
+  },
+  // Composer bar styles
+  composerBar: {
+    borderTopWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  composerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  attachButtonNew: {
+    marginRight: 8,
+    padding: 2,
+  },
+  composerInput: {
+    flex: 1,
+    minHeight: 40,
+    maxHeight: 120,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: '#F0F2F5',
+    borderRadius: 22,
+    fontSize: 15,
+    color: '#1A1A1A',
+  },
+  sendButtonNew: {
+    marginLeft: 8,
+    padding: 8,
+    borderRadius: 20,
+  },
+  sendButtonNewDisabled: {
+    opacity: 0.5,
   },
   attachmentsPreview: {
     maxHeight: 60,
