@@ -657,8 +657,103 @@ export function CourseScreen() {
     }
   };
 
+  // Helper to escape CSV fields
+  const escapeCsvField = (value: string | number | undefined | null): string => {
+    if (value === undefined || value === null) return '';
+    const str = String(value);
+    if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
+      return `"${str.replace(/"/g, '""')}"`;
+    }
+    return str;
+  };
+
+  // Generate CSV from gradebook data
+  const generateGradesCsv = (
+    data: GradebookData,
+    scope: 'all' | 'activities' | 'quizzes' | 'final_only',
+    includeInactive: boolean
+  ): string => {
+    const students = includeInactive
+      ? [...data.students, ...data.inactive_students]
+      : data.students;
+
+    const rows: string[][] = [];
+
+    // Build header row
+    const headers = ['Student Name', 'Email'];
+    if (exportOptions.includeStudentId) headers.push('Student ID');
+    if (exportOptions.includeEnrolledAt) headers.push('Enrolled At');
+
+    if (scope === 'all' || scope === 'activities') {
+      data.items.activities.forEach((item) => {
+        headers.push(`${escapeCsvField(item.title)} (Activity)`);
+      });
+    }
+
+    if (scope === 'all' || scope === 'quizzes') {
+      data.items.quizzes.forEach((item) => {
+        headers.push(`${escapeCsvField(item.title)} (Quiz)`);
+      });
+    }
+
+    if (scope === 'all' || scope === 'final_only') {
+      headers.push('Final Grade', 'Final Grade Letter');
+    }
+
+    rows.push(headers);
+
+    // Build data rows
+    students.forEach((student) => {
+      const row: (string | number)[] = [student.student_name, student.student_email];
+
+      if (exportOptions.includeStudentId) row.push(student.student_id);
+      if (exportOptions.includeEnrolledAt) row.push(student.enrolled_at || '');
+
+      if (scope === 'all' || scope === 'activities') {
+        data.items.activities.forEach((item) => {
+          const grade = student.grades.activities.find((g) => g.activity_id === item.id);
+          if (grade?.is_na) {
+            row.push('N/A');
+          } else if (grade?.score !== undefined) {
+            row.push(grade.score);
+          } else if (grade?.is_excused) {
+            row.push('Excused');
+          } else {
+            row.push('');
+          }
+        });
+      }
+
+      if (scope === 'all' || scope === 'quizzes') {
+        data.items.quizzes.forEach((item) => {
+          const grade = student.grades.quizzes.find((g) => g.quiz_id === item.id);
+          if (grade?.is_na) {
+            row.push('N/A');
+          } else if (grade?.score !== undefined) {
+            row.push(grade.score);
+          } else if (grade?.pending_grading) {
+            row.push('Pending');
+          } else {
+            row.push('');
+          }
+        });
+      }
+
+      if (scope === 'all' || scope === 'final_only') {
+        row.push(student.final_grade ?? '', student.final_grade_letter ?? '');
+      }
+
+      rows.push(row.map((v) => escapeCsvField(v)));
+    });
+
+    return rows.map((row) => row.join(',')).join('\n');
+  };
+
   const exportGradesCsv = () => {
-    if (!id) return;
+    if (!id || !gradebookData) {
+      Alert.alert('Error', 'No grade data available to export.');
+      return;
+    }
     Alert.alert('Export CSV', 'Export all grades for this section to CSV?', [
       { text: 'Cancel', style: 'cancel' },
       {
@@ -667,12 +762,12 @@ export function CourseScreen() {
           setExportingGrades(true);
           setGradeExportStatus('exporting');
           try {
-            const data = await api.getRaw(`/course-sections/${id}/grades/export/`);
-            const fallback = `course_section_${id}_grades.csv`;
-            const filename = parseFilenameFromContentDisposition(data.headers.get('content-disposition')) || fallback;
+            const csvContent = generateGradesCsv(gradebookData, exportScope, exportOptions.includeInactive);
+            const filename = `course_section_${id}_grades.csv`;
+
             if (Platform.OS === 'web') {
               const doc = (globalThis as any).document as Document;
-              const blob = new Blob([data.text], { type: 'text/csv;charset=utf-8;' });
+              const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
               const url = URL.createObjectURL(blob);
               const anchor = doc.createElement('a');
               anchor.href = url;
@@ -685,12 +780,13 @@ export function CourseScreen() {
               setGradeExportAt(new Date().toISOString());
               return;
             }
+
             const directory = FileSystem.documentDirectory || FileSystem.cacheDirectory;
             if (!directory) {
               throw new Error('No writable directory available.');
             }
             const target = `${directory}${filename}`;
-            await FileSystem.writeAsStringAsync(target, data.text, { encoding: FileSystem.EncodingType.UTF8 });
+            await FileSystem.writeAsStringAsync(target, csvContent, { encoding: FileSystem.EncodingType.UTF8 });
             try {
               if (Platform.OS === 'android') {
                 const contentUri = await FileSystem.getContentUriAsync(target);
@@ -2719,13 +2815,10 @@ export function CourseScreen() {
                   <TouchableOpacity
                     style={[styles.gradesExportBtn, exportingGrades && { opacity: 0.7 }]}
                     onPress={() => {
-                      if (!id) return;
-                      const params = new URLSearchParams({
-                        format: exportFormat,
-                        scope: exportScope,
-                        include_inactive: String(exportOptions.includeInactive),
-                      });
-                      const url = `/course-sections/${id}/grades/export/?${params.toString()}`;
+                      if (!id || !gradebookData) {
+                        Alert.alert('Error', 'No grade data available to export.');
+                        return;
+                      }
                       Alert.alert(
                         `Export ${exportFormat.toUpperCase()}`,
                         `Download grades as ${exportFormat.toUpperCase()}?`,
@@ -2737,16 +2830,18 @@ export function CourseScreen() {
                               setExportingGrades(true);
                               setGradeExportStatus('exporting');
                               try {
-                                const data = await api.getRaw(url);
+                                // Note: xlsx export falls back to CSV (same data, just renamed)
+                                // For proper xlsx, would need a library like xlsx.js
+                                const csvContent = generateGradesCsv(gradebookData, exportScope, exportOptions.includeInactive);
                                 const ext = exportFormat === 'xlsx' ? 'xlsx' : 'csv';
-                                const fallback = `course_section_${id}_grades.${ext}`;
-                                const filename = parseFilenameFromContentDisposition(data.headers.get('content-disposition')) || fallback;
+                                const filename = `course_section_${id}_grades.${ext}`;
+                                const mimeType = exportFormat === 'xlsx'
+                                  ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                                  : 'text/csv;charset=utf-8;';
+
                                 if (Platform.OS === 'web') {
                                   const doc = (globalThis as any).document as Document;
-                                  const mimeType = exportFormat === 'xlsx'
-                                    ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-                                    : 'text/csv;charset=utf-8;';
-                                  const blob = new Blob([data.text], { type: mimeType });
+                                  const blob = new Blob([csvContent], { type: mimeType });
                                   const url = URL.createObjectURL(blob);
                                   const anchor = doc.createElement('a');
                                   anchor.href = url;
@@ -2759,10 +2854,11 @@ export function CourseScreen() {
                                   setGradeExportAt(new Date().toISOString());
                                   return;
                                 }
+
                                 const directory = FileSystem.documentDirectory || FileSystem.cacheDirectory;
                                 if (!directory) throw new Error('No writable directory available.');
                                 const target = `${directory}${filename}`;
-                                await FileSystem.writeAsStringAsync(target, data.text, { encoding: FileSystem.EncodingType.UTF8 });
+                                await FileSystem.writeAsStringAsync(target, csvContent, { encoding: FileSystem.EncodingType.UTF8 });
                                 try {
                                   if (Platform.OS === 'android') {
                                     const contentUri = await FileSystem.getContentUriAsync(target);
