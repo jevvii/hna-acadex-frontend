@@ -759,6 +759,7 @@ export function CourseScreen() {
   const getQuizAction = (quiz: Quiz): QuizActionConfig => {
     const now = new Date();
     const isOpen = (!quiz.open_at || new Date(quiz.open_at) <= now) && (!quiz.close_at || new Date(quiz.close_at) >= now);
+    const isUpcoming = !!quiz.open_at && new Date(quiz.open_at) > now;
     const attemptsUsed = quiz.my_attempt?.attempts_used ?? (quiz.my_attempt?.attempt_number || 0);
     const attemptLimit = quiz.my_attempt?.attempt_limit ?? quiz.attempt_limit ?? 1;
     const attemptsRemaining = quiz.my_attempt?.attempts_remaining ?? Math.max(attemptLimit - attemptsUsed, 0);
@@ -780,6 +781,14 @@ export function CourseScreen() {
           if (quiz.my_attempt) viewQuizResult(quiz);
         },
         variant: 'result',
+      };
+    }
+    if (isUpcoming) {
+      return {
+        label: `Opens ${formatDate(quiz.open_at!)}`,
+        disabled: true,
+        onPress: () => {},
+        variant: 'closed',
       };
     }
     if (!isOpen) {
@@ -1703,11 +1712,15 @@ export function CourseScreen() {
                             })),
                             ...modQuizzes.map((q) => {
                               const now = new Date();
+                              const isUpcoming = !!q.open_at && new Date(q.open_at) > now;
+                              const metaText = isUpcoming
+                                ? `Opens ${formatDate(q.open_at!)}`
+                                : (q.close_at ? `Closes ${formatDate(q.close_at)}` : 'No close date');
                               return {
                                 key: `q-${q.id}`,
                                 kind: 'quiz' as const,
                                 title: q.title,
-                                meta: q.close_at ? `Closes ${formatDate(q.close_at)}` : 'No close date',
+                                meta: metaText,
                                 locked: !q.is_published || (!!q.open_at && new Date(q.open_at) > now) || (!!q.close_at && new Date(q.close_at) < now),
                                 complete: (q.my_attempt?.attempts_used ?? 0) > 0,
                                 published: !!q.is_published,
@@ -2259,8 +2272,15 @@ export function CourseScreen() {
               {quizzes.length === 0 ? <EmptyState icon="❓" title="No quizzes yet" /> : (
                 (() => {
                   const now = new Date();
+                  // Upcoming: quizzes scheduled to open in the future (not yet available)
+                  const upcoming = quizzes.filter(q => {
+                    const isOpenAtSet = !!q.open_at && new Date(q.open_at) > now;
+                    return isOpenAtSet;
+                  });
                   const missing = quizzes.filter(q => !canManage && !!q.close_at && new Date(q.close_at) < now && ((q.my_attempt?.attempts_used || 0) <= 0));
                   const open = quizzes.filter(q => {
+                    // Exclude quizzes that are upcoming (open_at in the future)
+                    if (!!q.open_at && new Date(q.open_at) > now) return false;
                     const isOpen = (!q.open_at || new Date(q.open_at) <= now) && (!q.close_at || new Date(q.close_at) >= now);
                     return isOpen;
                   });
@@ -2277,7 +2297,9 @@ export function CourseScreen() {
 
                   const renderQuizCard = (quiz: Quiz) => {
                     const isOpen = (!quiz.open_at || new Date(quiz.open_at) <= now) && (!quiz.close_at || new Date(quiz.close_at) >= now);
+                    const isUpcoming = !!quiz.open_at && new Date(quiz.open_at) > now;
                     const isMissing = !canManage && !!quiz.close_at && new Date(quiz.close_at) < now && ((quiz.my_attempt?.attempts_used || 0) <= 0);
+                    const statusDotColor = isUpcoming ? '#7C3AED' : (isOpen ? '#2E7D32' : '#9E9E9E');
                     return (
                       <TouchableOpacity
                         key={quiz.id}
@@ -2289,7 +2311,7 @@ export function CourseScreen() {
                         }}
                       >
                         <View style={styles.quizHeader}>
-                          <View style={[styles.quizStatusDot, { backgroundColor: isOpen ? '#2E7D32' : '#9E9E9E' }]} />
+                          <View style={[styles.quizStatusDot, { backgroundColor: statusDotColor }]} />
                           <Text style={[styles.quizTitle, { color: colors.textPrimary }, isMissing && styles.missingTitle]}>{quiz.title}</Text>
                         </View>
                         {isMissing && (
@@ -2356,8 +2378,9 @@ export function CourseScreen() {
 
                   return (
                     <>
-                      {renderAccordionSection('Missing', missing, Colors.accentRed)}
+                      {renderAccordionSection('Upcoming', upcoming, '#7C3AED')}
                       {renderAccordionSection('Open', open, '#2E7D32')}
+                      {renderAccordionSection('Missing', missing, Colors.accentRed)}
                       {renderAccordionSection('Closed', closed, colors.mutedForeground)}
                     </>
                   );

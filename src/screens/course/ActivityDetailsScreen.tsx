@@ -97,6 +97,9 @@ export function ActivityDetailsScreen({
   const isGraded = status === 'graded';
   const isSubmitted = status === 'submitted';
 
+  // Check if the deadline has passed
+  const isPastDue = activity?.deadline ? new Date(activity.deadline) < new Date() : false;
+
   // Get submission data
   const submission = activity?.my_submission;
 
@@ -224,6 +227,16 @@ export function ActivityDetailsScreen({
         <View style={[styles.statusBadge, { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' }]}>
           <View style={[styles.statusDot, { backgroundColor: '#2563EB' }]} />
           <Text style={[styles.statusText, { color: '#1E40AF' }]}>Submitted</Text>
+        </View>
+      );
+    }
+
+    // Show "Past Due" badge if deadline has passed and not submitted
+    if (isPastDue) {
+      return (
+        <View style={[styles.statusBadge, { backgroundColor: '#FEF2F2', borderColor: '#FCA5A5' }]}>
+          <View style={[styles.statusDot, { backgroundColor: '#DC2626' }]} />
+          <Text style={[styles.statusText, { color: '#991B1B' }]}>Past Due</Text>
         </View>
       );
     }
@@ -505,15 +518,22 @@ export function ActivityDetailsScreen({
       {/* Fixed Bottom Button */}
       {!canManage && (
         <View style={[styles.bottomBar, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-          <TouchableOpacity
-            style={[styles.submitButton, { backgroundColor: Colors.primary }]}
-            onPress={hasSubmission ? handleResubmit : handleSubmitPress}
-            activeOpacity={0.9}
-          >
-            <Text style={styles.submitButtonText}>
-              {hasSubmission ? 'Resubmit Assignment' : 'Submit Assignment'}
-            </Text>
-          </TouchableOpacity>
+          {isPastDue && !hasSubmission ? (
+            <View style={[styles.closedButton, { backgroundColor: colors.muted }]}>
+              <Ionicons name="time-outline" size={18} color="#FFFFFF" />
+              <Text style={styles.closedButtonText}>Assignment Closed - Past Due</Text>
+            </View>
+          ) : (
+            <TouchableOpacity
+              style={[styles.submitButton, { backgroundColor: Colors.primary }]}
+              onPress={hasSubmission ? handleResubmit : handleSubmitPress}
+              activeOpacity={0.9}
+            >
+              <Text style={styles.submitButtonText}>
+                {hasSubmission ? 'Resubmit Assignment' : 'Submit Assignment'}
+              </Text>
+            </TouchableOpacity>
+          )}
         </View>
       )}
 
@@ -807,6 +827,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   submitButtonText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  closedButton: {
+    borderRadius: Radius.xl,
+    paddingVertical: Spacing.lg,
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: Spacing.sm,
+  },
+  closedButtonText: {
     fontSize: 16,
     fontWeight: '700',
     color: '#FFFFFF',

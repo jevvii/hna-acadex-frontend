@@ -444,7 +444,16 @@ function QuestionCard({
 
             {question.question_type === 'essay' && (
               <View style={styles.fieldWrap}>
+                <View style={styles.essayNotice}>
+                  <Ionicons name="information-circle" size={18} color="#D97706" />
+                  <Text style={styles.essayNoticeText}>
+                    Essay questions require manual grading by the teacher
+                  </Text>
+                </View>
                 <Text style={styles.fieldLabel}>Rubric / Notes (Optional)</Text>
+                <Text style={styles.fieldHint}>
+                  Add grading criteria to help evaluate responses
+                </Text>
                 <TextInput
                   style={[styles.fieldInput, styles.fieldInputMulti]}
                   value={question.rubric || ''}
@@ -1495,6 +1504,26 @@ const styles = StyleSheet.create({
   },
   trueFalseBtnTextActive: {
     color: '#FFFFFF',
+  },
+
+  // Essay notice
+  essayNotice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    backgroundColor: '#FEF3C7',
+    borderWidth: 1,
+    borderColor: '#D97706',
+    borderRadius: Radius.md,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    marginBottom: Spacing.md,
+  },
+  essayNoticeText: {
+    flex: 1,
+    fontSize: 13,
+    color: '#92400E',
+    fontWeight: '500',
   },
 
   // Delete question
