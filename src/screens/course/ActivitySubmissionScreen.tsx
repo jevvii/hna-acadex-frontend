@@ -204,6 +204,9 @@ export function ActivitySubmissionScreen({
     setSelectedAttachments((prev) => prev.filter((_, i) => i !== index));
   };
 
+  // Get submission data (moved before handleSubmitComment for proper ordering)
+  const submission = propSubmission || activity?.my_submission;
+
   // Fetch comments when activity changes
   useEffect(() => {
     const fetchComments = async () => {
@@ -235,15 +238,20 @@ export function ActivitySubmissionScreen({
         type: att.mimeType,
       }));
 
+      // Get submission ID for associating comment with the student's submission
+      const submissionId = submission?.id || activity?.my_submission?.id;
+
       const newComment = await activityCommentsApi.create(
         {
           activity_id: activity.id,
           content: commentText.trim() || undefined,
+          submission_id: submissionId,
         },
         files.length > 0 ? files as any : undefined
       );
       if (newComment) {
-        setComments(prev => [newComment, ...prev]);
+        // Append new comment at the end (bottom of message list)
+        setComments(prev => [...prev, newComment]);
         setCommentText('');
         setSelectedAttachments([]);
         Keyboard.dismiss();
@@ -253,10 +261,8 @@ export function ActivitySubmissionScreen({
     } finally {
       setSubmittingComment(false);
     }
-  }, [activity?.id, commentText, submittingComment, selectedAttachments]);
+  }, [activity?.id, activity?.my_submission?.id, propSubmission?.id, commentText, submittingComment, selectedAttachments, submission?.id]);
 
-  // Get submission data
-  const submission = propSubmission || activity?.my_submission;
   const files = submission?.file_urls || [];
   const score = submission?.score;
   const feedback = submission?.feedback;
@@ -575,49 +581,97 @@ export function ActivitySubmissionScreen({
                           const hasContent = comment.content && comment.content.trim().length > 0;
                           const hasFiles = comment.file_urls && comment.file_urls.length > 0;
 
-                          // All current messages are from current user (outgoing style)
-                          return (
-                            <View key={comment.id} style={styles.messageRowOutgoing}>
-                              <View style={styles.messageContentOutgoing}>
-                                {/* Message bubbles */}
-                                {hasContent && (
-                                  <View style={styles.messageBubbleOutgoing}>
-                                    <Text style={styles.messageTextOutgoing}>{comment.content}</Text>
-                                  </View>
-                                )}
+                          // Check if comment is from current user (outgoing) or other (incoming)
+                          // Students see their own comments as outgoing, teacher comments as incoming
+                          const isOwnComment = user?.id === comment.author_id;
+                          const authorName = comment.author_name || 'Teacher';
 
-                                {/* File Attachments */}
-                                {hasFiles && comment.file_urls!.map((url, idx) => {
-                                  const fileName = url.split('/').pop() || 'file';
-                                  return (
-                                    <TouchableOpacity
-                                      key={idx}
-                                      style={styles.fileBubbleOutgoing}
-                                      onPress={() => {
-                                        // TODO: Open file preview
-                                      }}
-                                    >
-                                      <Ionicons
-                                        name={getFileIconOutline(fileName) as any}
-                                        size={20}
-                                        color="#FFFFFF"
-                                      />
-                                      <Text style={styles.fileNameOutgoing} numberOfLines={2}>
-                                        {fileName}
-                                      </Text>
-                                    </TouchableOpacity>
-                                  );
-                                })}
-
-                                {/* Timestamp - only show if not grouped */}
-                                {showTimestamp && (
-                                  <Text style={styles.messageTimestampOutgoing}>
-                                    {formatDate(comment.created_at)}
-                                  </Text>
-                                )}
+                          // Render as incoming (teacher's comment) or outgoing (student's own comment)
+                          if (isOwnComment) {
+                            // Outgoing - Student's own comment
+                            return (
+                              <View key={comment.id} style={styles.messageRowOutgoing}>
+                                <View style={styles.messageContentOutgoing}>
+                                  {hasContent && (
+                                    <View style={styles.messageBubbleOutgoing}>
+                                      <Text style={styles.messageTextOutgoing}>{comment.content}</Text>
+                                    </View>
+                                  )}
+                                  {hasFiles && comment.file_urls!.map((url, idx) => {
+                                    const fileName = url.split('/').pop() || 'file';
+                                    return (
+                                      <TouchableOpacity
+                                        key={idx}
+                                        style={styles.fileBubbleOutgoing}
+                                        onPress={() => {
+                                          // TODO: Open file preview
+                                        }}
+                                      >
+                                        <Ionicons
+                                          name={getFileIconOutline(fileName) as any}
+                                          size={20}
+                                          color="#FFFFFF"
+                                        />
+                                        <Text style={styles.fileNameOutgoing} numberOfLines={2}>
+                                          {fileName}
+                                        </Text>
+                                      </TouchableOpacity>
+                                    );
+                                  })}
+                                  {showTimestamp && (
+                                    <Text style={styles.messageTimestampOutgoing}>
+                                      {formatDate(comment.created_at)}
+                                    </Text>
+                                  )}
+                                </View>
                               </View>
-                            </View>
-                          );
+                            );
+                          } else {
+                            // Incoming - Teacher's comment
+                            return (
+                              <View key={comment.id} style={styles.messageRowIncoming}>
+                                <View style={styles.avatarContainer}>
+                                  <View style={styles.avatar}>
+                                    <Text style={styles.avatarText}>{authorName.charAt(0).toUpperCase()}</Text>
+                                  </View>
+                                </View>
+                                <View style={styles.messageContentIncoming}>
+                                  <Text style={styles.authorNameIncoming}>{authorName}</Text>
+                                  {hasContent && (
+                                    <View style={styles.messageBubbleIncoming}>
+                                      <Text style={styles.messageTextIncoming}>{comment.content}</Text>
+                                    </View>
+                                  )}
+                                  {hasFiles && comment.file_urls!.map((url, idx) => {
+                                    const fileName = url.split('/').pop() || 'file';
+                                    return (
+                                      <TouchableOpacity
+                                        key={idx}
+                                        style={styles.fileBubbleIncoming}
+                                        onPress={() => {
+                                          // TODO: Open file preview
+                                        }}
+                                      >
+                                        <Ionicons
+                                          name={getFileIconOutline(fileName) as any}
+                                          size={20}
+                                          color={Colors.primary}
+                                        />
+                                        <Text style={styles.fileNameIncoming} numberOfLines={2}>
+                                          {fileName}
+                                        </Text>
+                                      </TouchableOpacity>
+                                    );
+                                  })}
+                                  {showTimestamp && (
+                                    <Text style={styles.messageTimestampIncoming}>
+                                      {formatDate(comment.created_at)}
+                                    </Text>
+                                  )}
+                                </View>
+                              </View>
+                            );
+                          }
                         })}
                       </View>
                     ))}
@@ -1437,6 +1491,24 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '500',
     color: '#FFFFFF',
+    marginLeft: 8,
+    flex: 1,
+  },
+  // Incoming file attachment styles (for teacher comments)
+  fileBubbleIncoming: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F0F2F5',
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginTop: 4,
+    maxWidth: '100%',
+  },
+  fileNameIncoming: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: Colors.primary,
     marginLeft: 8,
     flex: 1,
   },
