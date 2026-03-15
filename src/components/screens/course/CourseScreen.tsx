@@ -2395,6 +2395,15 @@ export function CourseScreen() {
                       </View>
                     </View>
                     <View style={styles.statItem}>
+                      <View style={[styles.statIconBg, { backgroundColor: '#9CA3AF20' }]}>
+                        <Ionicons name="ban" size={18} color="#9CA3AF" />
+                      </View>
+                      <View style={styles.statInfo}>
+                        <Text style={styles.statValue}>{studentAttendanceSummary?.excused_count || 0}</Text>
+                        <Text style={styles.statLabel}>Excused</Text>
+                      </View>
+                    </View>
+                    <View style={styles.statItem}>
                       <View style={[styles.statIconBg, { backgroundColor: '#EF444420' }]}>
                         <Ionicons name="close-circle" size={18} color="#EF4444" />
                       </View>
