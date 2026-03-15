@@ -11,7 +11,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useTheme } from '@/contexts/ThemeContext';
 import { CalendarEvent, EventType, TodoItem } from '@/types';
 import { Colors, Spacing, Radius, Shadows } from '@/constants/colors';
-import { DateTimePicker } from '@/components/shared/DateTimePicker';
+import { InlineDatePicker } from '@/components/shared/InlineDatePicker';
 
 const DAYS   = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 const MONTHS = ['January','February','March','April','May','June',
@@ -148,7 +148,7 @@ function AddEventModal({ visible, initialDate, onClose, onSaved }: AddEventModal
             {/* Date & time picker */}
             <Text style={[mStyles.sectionLabel, { color: colors.textSecondary }]}>DATE & TIME</Text>
 
-            <DateTimePicker
+            <InlineDatePicker
               value={eventDate}
               hasTime={hasTime}
               onToggleTime={setHasTime}

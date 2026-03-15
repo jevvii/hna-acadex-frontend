@@ -13,7 +13,7 @@ import { api } from '@/lib/api';
 import { useTheme } from '@/contexts/ThemeContext';
 import { TodoItem } from '@/types';
 import { Colors, Spacing, Radius, Shadows } from '@/constants/colors';
-import { DateTimePicker } from '@/components/shared/DateTimePicker';
+import { DateTimePickerModal } from '@/components/shared/DateTimePickerModal';
 
 type Filter = 'all' | 'pending' | 'done';
 
@@ -42,6 +42,7 @@ function AddTodoModal({ visible, onClose, onSaved }: AddTodoModalProps) {
   const [dueDate,  setDueDate]  = useState(new Date());
   const [hasTime,  setHasTime]  = useState(true);
   const [saving,   setSaving]   = useState(false);
+  const [showPicker, setShowPicker] = useState(false);
 
   useEffect(() => {
     if (!visible) return;
@@ -53,6 +54,7 @@ function AddTodoModal({ visible, onClose, onSaved }: AddTodoModalProps) {
     tomorrow.setHours(23, 59, 0, 0);
     setDueDate(tomorrow);
     setHasTime(true);
+    setShowPicker(false);
   }, [visible]);
 
   const handleSave = async () => {
@@ -79,6 +81,34 @@ function AddTodoModal({ visible, onClose, onSaved }: AddTodoModalProps) {
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleDueToggle = () => {
+    if (!hasDue) {
+      // Turning ON - show picker immediately
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      tomorrow.setHours(23, 59, 0, 0);
+      setDueDate(tomorrow);
+      setHasDue(true);
+      setShowPicker(true);
+    } else {
+      // Turning OFF
+      setHasDue(false);
+      setShowPicker(false);
+    }
+  };
+
+  const handlePickerClose = () => {
+    setShowPicker(false);
+  };
+
+  const handlePickerChange = (date: Date) => {
+    setDueDate(date);
+  };
+
+  const handleTimeToggle = () => {
+    setHasTime(!hasTime);
   };
 
   return (
@@ -127,7 +157,7 @@ function AddTodoModal({ visible, onClose, onSaved }: AddTodoModalProps) {
             {/* Due date section */}
             <TouchableOpacity
               style={[tStyles.dueToggleCard, { backgroundColor: colors.surface }]}
-              onPress={() => setHasDue(!hasDue)}
+              onPress={handleDueToggle}
               activeOpacity={0.8}
             >
               <Ionicons name="calendar-outline" size={18} color={hasDue ? Colors.primary : colors.textSecondary} />
@@ -137,33 +167,46 @@ function AddTodoModal({ visible, onClose, onSaved }: AddTodoModalProps) {
               </View>
             </TouchableOpacity>
 
+            {/* Due date summary */}
             {hasDue && (
-              <>
-                <Text style={[tStyles.sectionLabel, { color: colors.textSecondary }]}>PICK DUE DATE</Text>
-                <DateTimePicker
-                  value={dueDate}
-                  hasTime={hasTime}
-                  onToggleTime={setHasTime}
-                  onChange={setDueDate}
-                />
-
-                {/* Summary */}
-                <View style={[tStyles.summaryRow, { backgroundColor: colors.surface }]}>
-                  <Ionicons name="time-outline" size={15} color={Colors.primary} />
-                  <Text style={[tStyles.summaryText, { color: colors.textSecondary }]}>
-                    Due {dueDate.toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric', year:'numeric' })}
-                    {hasTime && (
-                      ' at ' + dueDate.toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit' })
-                    )}
+              <TouchableOpacity
+                style={[tStyles.summaryRow, { backgroundColor: colors.surface }]}
+                onPress={() => setShowPicker(true)}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="calendar-outline" size={18} color={Colors.primary} />
+                <View style={tStyles.summaryContent}>
+                  <Text style={[tStyles.summaryText, { color: colors.textPrimary }]}>
+                    {dueDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}
                   </Text>
+                  {hasTime && (
+                    <Text style={[tStyles.summaryTime, { color: colors.textSecondary }]}>
+                      {dueDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+                    </Text>
+                  )}
                 </View>
-              </>
+                <TouchableOpacity onPress={handleTimeToggle} style={tStyles.timeToggle}>
+                  <Text style={[tStyles.timeToggleLabel, { color: hasTime ? Colors.primary : colors.textSecondary }]}>
+                    {hasTime ? 'Time ✓' : 'All Day'}
+                  </Text>
+                </TouchableOpacity>
+              </TouchableOpacity>
             )}
 
             <View style={{ height: 60 }} />
           </ScrollView>
         </View>
       </KeyboardAvoidingView>
+
+      {/* Date/Time Picker Modal */}
+      <DateTimePickerModal
+        visible={showPicker}
+        value={dueDate}
+        onChange={handlePickerChange}
+        onClose={handlePickerClose}
+        hasTime={hasTime}
+        minDate={new Date()}
+      />
     </Modal>
   );
 }
@@ -250,11 +293,18 @@ export function TodoScreen() {
     }
   };
 
-  const filtered = todos.filter((t) => {
-    if (filter === 'pending') return !t.is_done;
-    if (filter === 'done')    return  t.is_done;
-    return true;
-  });
+  const filtered = todos
+    .filter((t) => {
+      if (filter === 'pending') return !t.is_done;
+      if (filter === 'done')    return  t.is_done;
+      return true;
+    })
+    .sort((a, b) => {
+      // Sort by created_at descending (newest first)
+      const aTime = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const bTime = b.created_at ? new Date(b.created_at).getTime() : 0;
+      return bTime - aTime;
+    });
 
   const pending = todos.filter((t) => !t.is_done).length;
 
@@ -318,36 +368,30 @@ export function TodoScreen() {
 
           const renderRightActions = (_progress: Animated.AnimatedInterpolation<number>, dragX: Animated.AnimatedInterpolation<number>) => {
             const trans = dragX.interpolate({
-              inputRange: [-100, 0],
-              outputRange: [0, 100],
+              inputRange: [-80, 0],
+              outputRange: [0, 80],
               extrapolate: 'clamp',
             });
             return (
-              <Animated.View style={{ transform: [{ translateX: trans }] }}>
-                <TouchableOpacity
-                  style={styles.deleteAction}
-                  onPress={() => deleteTodo(item.id)}
-                >
+              <Animated.View style={[styles.deleteActionContainer, { transform: [{ translateX: trans }] }]}>
+                <View style={styles.deleteAction}>
                   <Ionicons name="trash-outline" size={22} color="#FFFFFF" />
-                </TouchableOpacity>
+                </View>
               </Animated.View>
             );
           };
 
           const renderLeftActions = (_progress: Animated.AnimatedInterpolation<number>, dragX: Animated.AnimatedInterpolation<number>) => {
             const trans = dragX.interpolate({
-              inputRange: [0, 100],
-              outputRange: [-100, 0],
+              inputRange: [0, 80],
+              outputRange: [-80, 0],
               extrapolate: 'clamp',
             });
             return (
-              <Animated.View style={{ transform: [{ translateX: trans }] }}>
-                <TouchableOpacity
-                  style={styles.deleteAction}
-                  onPress={() => deleteTodo(item.id)}
-                >
+              <Animated.View style={[styles.deleteActionContainer, { transform: [{ translateX: trans }] }]}>
+                <View style={styles.deleteAction}>
                   <Ionicons name="trash-outline" size={22} color="#FFFFFF" />
-                </TouchableOpacity>
+                </View>
               </Animated.View>
             );
           };
@@ -360,6 +404,11 @@ export function TodoScreen() {
               overshootRight={false}
               overshootLeft={false}
               friction={2}
+              onSwipeableOpen={(direction) => {
+                if (canDelete) {
+                  deleteTodo(item.id);
+                }
+              }}
             >
               <TouchableOpacity
                 activeOpacity={canOpenLinked ? 0.85 : 1}
@@ -463,14 +512,19 @@ const styles = StyleSheet.create({
   dueText: { fontSize: 11 },
   courseTag: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 },
   courseTagText: { fontSize: 11, fontWeight: '500' },
+  deleteActionContainer: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    width: 80,
+    marginBottom: Spacing.sm,
+  },
   deleteAction: {
     backgroundColor: '#DC2626',
     justifyContent: 'center',
     alignItems: 'center',
     width: 80,
-    height: '100%',
+    flex: 1,
     borderRadius: Radius.lg,
-    marginVertical: Spacing.sm,
   },
   fab: {
     position: 'absolute', bottom: 100, right: Spacing.xl,
@@ -512,8 +566,17 @@ const tStyles = StyleSheet.create({
   thumbOn: { alignSelf: 'flex-start' },
   sectionLabel: { fontSize: 11, fontWeight: '700', letterSpacing: 0.8, marginBottom: Spacing.sm, marginLeft: 4 },
   summaryRow: {
-    flexDirection: 'row', alignItems: 'center', gap: Spacing.sm,
-    borderRadius: Radius.lg, padding: Spacing.md, marginTop: 2,
+    flexDirection: 'row', alignItems: 'center', gap: Spacing.md,
+    borderRadius: Radius.lg, padding: Spacing.lg, marginTop: Spacing.sm,
   },
-  summaryText: { fontSize: 13 },
+  summaryContent: { flex: 1 },
+  summaryText: { fontSize: 15, fontWeight: '600' },
+  summaryTime: { fontSize: 13, marginTop: 2 },
+  timeToggle: {
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    borderRadius: Radius.full,
+    backgroundColor: 'rgba(26, 58, 107, 0.08)',
+  },
+  timeToggleLabel: { fontSize: 13, fontWeight: '600' },
 });
