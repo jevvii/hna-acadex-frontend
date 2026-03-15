@@ -19,6 +19,7 @@ import {
   LayoutAnimation,
   UIManager,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
@@ -29,6 +30,7 @@ import { Activity, Submission, ActivityComment } from '@/types';
 import { activityCommentsApi } from '@/services/activityComments';
 import { api } from '@/lib/api';
 import { Colors, Spacing, Radius, Shadows } from '@/constants/colors';
+import { resolveBackendFileUrl, isImageFile, fileNameFromUrl } from './utils';
 
 // Enable LayoutAnimation for Android
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -61,21 +63,9 @@ const getFileIcon = (fileName: string): string => {
   return 'document-attach';
 };
 
-const isImageFile = (fileName: string): boolean => {
-  const ext = fileName.split('.').pop()?.toLowerCase() || '';
-  return ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'heic'].includes(ext);
-};
-
 const isPdfFile = (fileName: string): boolean => {
   const ext = fileName.split('.').pop()?.toLowerCase() || '';
   return ext === 'pdf';
-};
-
-const resolveBackendFileUrl = (url: string): string => {
-  if (!url) return '';
-  if (url.startsWith('http://') || url.startsWith('https://')) return url;
-  const baseUrl = 'https://hna-backend.jjmjr.tech';
-  return `${baseUrl}${url.startsWith('/') ? '' : '/'}${url}`;
 };
 
 const formatFileSize = (bytes?: number): string => {
@@ -161,6 +151,18 @@ export function GradeActivitiesScreen({
   });
   const [savingKey, setSavingKey] = useState<string | null>(null);
   const [previewImageUri, setPreviewImageUri] = useState<string | null>(null);
+  const [authHeaders, setAuthHeaders] = useState<Record<string, string>>({});
+
+  // Fetch auth token for authenticated image loading
+  useEffect(() => {
+    const fetchToken = async () => {
+      const token = await AsyncStorage.getItem('hna_access_token');
+      if (token) {
+        setAuthHeaders({ Authorization: `Bearer ${token}` });
+      }
+    };
+    fetchToken();
+  }, []);
 
   // Calculate grading progress
   const gradedCount = useMemo(() => {
@@ -425,7 +427,7 @@ export function GradeActivitiesScreen({
   // Render full-width submission preview with locked aspect ratio
   const renderFileCard = (url: string, index: number, rowKey: string) => {
     const resolvedUrl = resolveBackendFileUrl(url);
-    const fileName = url.split('/').pop() || 'file';
+    const fileName = fileNameFromUrl(url);
     const isImage = isImageFile(fileName);
     const isPdf = isPdfFile(fileName);
 
@@ -445,10 +447,11 @@ export function GradeActivitiesScreen({
         >
           {isImage ? (
             <Image
-              source={{ uri: resolvedUrl }}
+              source={{ uri: resolvedUrl, headers: authHeaders }}
               style={styles.submissionImagePreview}
               contentFit="cover"
               transition={120}
+              placeholder={{ blurhash: 'L6PZfSjE.Ays.Wayofay.Sj[' }}
             />
           ) : (
             <View style={styles.submissionDocPreview}>
@@ -516,7 +519,7 @@ export function GradeActivitiesScreen({
             >
               <Ionicons name="document-text-outline" size={18} color="#FFFFFF" />
               <Text style={styles.fileBubbleText} numberOfLines={1}>
-                {url.split('/').pop() || 'File'}
+                {fileNameFromUrl(url)}
               </Text>
             </TouchableOpacity>
           ))}
@@ -547,7 +550,7 @@ export function GradeActivitiesScreen({
               >
                 <Ionicons name="document-text-outline" size={18} color={Colors.primary} />
                 <Text style={styles.fileBubbleTextIncoming} numberOfLines={1}>
-                  {url.split('/').pop() || 'File'}
+                  {fileNameFromUrl(url)}
                 </Text>
               </TouchableOpacity>
             ))}
@@ -849,7 +852,7 @@ export function GradeActivitiesScreen({
           <Ionicons name="close" size={32} color="#FFFFFF" />
         </TouchableOpacity>
         <Image
-          source={{ uri: previewImageUri }}
+          source={{ uri: previewImageUri, headers: authHeaders }}
           style={styles.imagePreviewFull}
           contentFit="contain"
         />
