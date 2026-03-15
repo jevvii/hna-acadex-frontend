@@ -226,6 +226,9 @@ export interface Quiz {
   instructions?: string;
   time_limit_minutes?: number;
   attempt_limit: number;
+  points?: number;
+  question_count?: number;
+  questions?: QuizQuestion[];
   score_selection_policy?: ScoreSelectionPolicy;
   open_at?: string;
   close_at?: string;

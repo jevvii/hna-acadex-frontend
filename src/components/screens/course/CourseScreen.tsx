@@ -24,6 +24,7 @@ import { FormattedText } from '@/components/shared/FormattedText';
 import { ActivityDetailsScreen } from '@/screens/course/ActivityDetailsScreen';
 import { ActivitySubmissionScreen } from '@/screens/course/ActivitySubmissionScreen';
 import { GradeActivitiesScreen } from '@/screens/course/GradeActivitiesScreen';
+import { QuizDetailsScreen } from '@/screens/course/QuizDetailsScreen';
 import { WeeklyModule, Activity, CourseFile, Announcement, Quiz, AttendanceStatus } from '@/types';
 import { Colors, Spacing, Radius, Shadows, Typography } from '@/constants/colors';
 import {
@@ -719,18 +720,6 @@ export function CourseScreen() {
     }
   }, [quizTimeRemaining, quizModalVisible, quizSubmitting, selectedQuiz]);
 
-  useEffect(() => {
-    if (!quizModalVisible || !selectedQuiz || !currentQuizAttemptId) return;
-    const autosaveInterval = setInterval(async () => {
-      try {
-        await saveQuizProgress();
-      } catch {
-        // Silent fail; next autosave/submit will retry.
-      }
-    }, 15000);
-    return () => clearInterval(autosaveInterval);
-  }, [quizModalVisible, selectedQuiz, currentQuizAttemptId, quizAnswers]);
-
   const moduleById = useMemo(() => {
     const map = new Map<string, WeeklyModule>();
     modules.forEach((m) => map.set(m.id, m));
@@ -1394,14 +1383,30 @@ export function CourseScreen() {
     }
   };
 
-  const confirmAndStartQuiz = (quiz: Quiz) => {
+  const confirmAndStartQuiz = (quiz: Quiz, isResume: boolean = false) => {
+    const hasInProgress = !!quiz.my_in_progress_attempt?.attempt_id;
+    const isResuming = hasInProgress || isResume;
+
+    const timeLimitText = quiz.time_limit_minutes
+      ? `\n\nTime limit: ${quiz.time_limit_minutes} minutes`
+      : '';
+    const attemptsText = quiz.attempt_limit
+      ? `\nAttempts allowed: ${quiz.attempt_limit}`
+      : '';
+
+    const title = isResuming ? 'Resume Quiz' : 'Start Quiz';
+    const confirmButton = isResuming ? 'Resume Quiz' : 'Start Quiz';
+    const introText = isResuming
+      ? `Continue your quiz "${quiz.title}"?${timeLimitText}${attemptsText}`
+      : `Are you sure you want to start "${quiz.title}"?${timeLimitText}${attemptsText}`;
+
     Alert.alert(
-      'Start Quiz',
-      `Are you sure you want to start "${quiz.title}"?`,
+      title,
+      `${introText}\n\n⚠️ Important: Once you ${isResuming ? 'resume' : 'start'}, you cannot leave without submitting. Going back, closing the app, or switching to another app will automatically submit your quiz.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Start',
+          text: confirmButton,
           onPress: async () => {
             setQuizInfoModalVisible(false);
             await startQuiz(quiz);
@@ -1527,6 +1532,52 @@ export function CourseScreen() {
     }
   }, [quizModalVisible, selectedQuiz, currentQuizAttemptId, quizSubmitting, quizQuestions, quizAnswers, fetchData]);
 
+  // Function to submit quiz and show result modal (used by confirmation dialogs)
+  const submitQuizAndClose = useCallback(async () => {
+    if (!selectedQuiz || !currentQuizAttemptId) return;
+    setQuizSubmitting(true);
+    try {
+      const answers = quizQuestions.map((q) => ({
+        question_id: q.id,
+        selected_choice_id: quizAnswers[q.id]?.selected_choice_id || null,
+        text_answer: quizAnswers[q.id]?.text_answer || '',
+      }));
+
+      await api.post(`/quizzes/${selectedQuiz.id}/submit-attempt/`, {
+        attempt_id: currentQuizAttemptId,
+        answers,
+      });
+
+      // Reset quiz state
+      setQuizModalVisible(false);
+      setSelectedQuiz(null);
+      setCurrentQuizAttemptId(null);
+      setQuizTimeRemaining(null);
+      setQuizQuestions([]);
+      setQuizAnswers({});
+
+      // Fetch result and show modal
+      await fetchData();
+      try {
+        const result = await api.get(`/quizzes/${selectedQuiz.id}/my-latest-attempt/`);
+        setQuizResult(result);
+      } catch {
+        setQuizResult({
+          attempt: { score: null, max_score: null, pending_manual_grading: false },
+          attempt_limit: selectedQuiz.attempt_limit,
+          attempts_remaining: 0,
+          attempt_stats: { graded_count: 0, average_score: null, lowest_score: null, highest_score: null },
+          attempts: [],
+        });
+      }
+      setQuizResultModalVisible(true);
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'Failed to submit quiz.');
+    } finally {
+      setQuizSubmitting(false);
+    }
+  }, [selectedQuiz, currentQuizAttemptId, quizQuestions, quizAnswers, fetchData]);
+
   // Auto-submit on app going to background/inactive (exit detector)
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextAppState) => {
@@ -1537,55 +1588,46 @@ export function CourseScreen() {
     return () => subscription.remove();
   }, [autoSubmitQuiz]);
 
-  // Auto-submit on navigation away (back button / swipe back)
+  // Handle back navigation during quiz - show confirmation dialog
   useEffect(() => {
     if (!quizModalVisible) return;
 
     const beforeRemoveHandler = (e: any) => {
-      // Prevent default navigation, auto-submit, then allow navigation
+      // Prevent default navigation
       e.preventDefault();
-      autoSubmitQuiz();
+
+      // Show confirmation dialog - backing out means submitting
+      Alert.alert(
+        'Exit Quiz?',
+        'Going back will submit your quiz with your current answers. You cannot resume this attempt.',
+        [
+          { text: 'Stay', style: 'cancel' },
+          {
+            text: 'Exit & Submit',
+            style: 'destructive',
+            onPress: async () => {
+              await submitQuizAndClose();
+            },
+          },
+        ],
+      );
     };
 
     navigation.addListener('beforeRemove', beforeRemoveHandler);
     return () => navigation.removeListener('beforeRemove', beforeRemoveHandler);
-  }, [navigation, quizModalVisible, autoSubmitQuiz]);
-
-  const saveQuizProgress = async () => {
-    if (!selectedQuiz || !currentQuizAttemptId) return;
-    const answers = quizQuestions.map((q) => ({
-      question_id: q.id,
-      selected_choice_id: quizAnswers[q.id]?.selected_choice_id || null,
-      text_answer: quizAnswers[q.id]?.text_answer || '',
-    }));
-    await api.post(`/quizzes/${selectedQuiz.id}/save-progress/`, {
-      attempt_id: currentQuizAttemptId,
-      answers,
-    });
-  };
+  }, [navigation, quizModalVisible, submitQuizAndClose]);
 
   const handleQuizCancel = () => {
     Alert.alert(
-      'Leave Quiz?',
-      'Your timer will continue. You can resume this quiz later.',
+      'Exit Quiz?',
+      'Going back will submit your quiz with your current answers. You cannot resume this attempt.',
       [
         { text: 'Stay', style: 'cancel' },
         {
-          text: 'Leave',
+          text: 'Exit & Submit',
+          style: 'destructive',
           onPress: async () => {
-            try {
-              await saveQuizProgress();
-            } catch {
-              // Best effort; timer/session still persists server-side.
-            } finally {
-              setQuizModalVisible(false);
-              setSelectedQuiz(null);
-              setCurrentQuizAttemptId(null);
-              setQuizTimeRemaining(null);
-              setQuizQuestions([]);
-              setQuizAnswers({});
-              fetchData();
-            }
+            await submitQuizAndClose();
           },
         },
       ],
@@ -1690,8 +1732,21 @@ export function CourseScreen() {
     setSelectedQuizForInfo(quiz);
     setQuizInfoModalVisible(true);
     try {
-      const data = await api.get(`/quizzes/${quiz.id}/my-latest-attempt/`);
-      setQuizInfoStats(data);
+      // Fetch both attempt stats and quiz details (including question count)
+      const [attemptData, quizData] = await Promise.all([
+        api.get(`/quizzes/${quiz.id}/my-latest-attempt/`),
+        api.get(`/quizzes/${quiz.id}/`),
+      ]);
+      setQuizInfoStats(attemptData);
+      // Merge quiz details (including question_count) into selectedQuizForInfo
+      if (quizData) {
+        setSelectedQuizForInfo({
+          ...quiz,
+          points: quizData.points ?? quiz.points,
+          question_count: quizData.question_count ?? quizData.questions?.length,
+          questions: quizData.questions ?? quiz.questions,
+        });
+      }
     } catch {
       setQuizInfoStats(null);
     }
@@ -3042,78 +3097,30 @@ export function CourseScreen() {
       </Modal>
 
       <Modal visible={quizInfoModalVisible} animationType="slide" onRequestClose={() => setQuizInfoModalVisible(false)}>
-        <View style={[styles.modalWrap, { backgroundColor: colors.background }]}>
-          <View style={[styles.modalHeader, { borderBottomColor: colors.border, backgroundColor: colors.surface }]}>
-            <TouchableOpacity onPress={() => setQuizInfoModalVisible(false)}><Text style={[styles.modalCancel, { color: colors.textSecondary }]}>Close</Text></TouchableOpacity>
-            <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Quiz Details</Text>
-            <View style={{ width: 48 }} />
-          </View>
-          <ScrollView contentContainerStyle={styles.modalBody}>
-            {!!selectedQuizForInfo && (
-              <>
-                {(() => {
-                  const action = getQuizAction(selectedQuizForInfo);
-                  const actionStyle = QUIZ_ACTION_STYLES[action.variant];
-                  return (
-                    <LinearGradient colors={actionStyle.gradient} style={styles.detailHeroCard}>
-                      <Text style={styles.detailHeroTitle}>{selectedQuizForInfo.title}</Text>
-                      <View style={styles.detailHeroMetaRow}>
-                        <Text style={[styles.detailHeroMetaBadge, { backgroundColor: actionStyle.badgeBackground, color: actionStyle.badgeText }]}>
-                          {action.label}
-                        </Text>
-                        <Text style={[styles.detailHeroMetaBadge, { backgroundColor: actionStyle.badgeBackground, color: actionStyle.badgeText }]}>
-                          Attempts: {selectedQuizForInfo.my_attempt?.attempts_used ?? 0}/{selectedQuizForInfo.my_attempt?.attempt_limit ?? selectedQuizForInfo.attempt_limit}
-                        </Text>
-                        <Text style={[styles.detailHeroMetaBadge, { backgroundColor: actionStyle.badgeBackground, color: actionStyle.badgeText }]}>
-                          Time: {selectedQuizForInfo.time_limit_minutes ? `${selectedQuizForInfo.time_limit_minutes}m` : 'No limit'}
-                        </Text>
-                      </View>
-                      <View style={styles.detailHeroMetaRow}>
-                        <Text style={styles.detailHeroMetaText}>Opens: {selectedQuizForInfo.open_at ? formatDate(selectedQuizForInfo.open_at) : 'Immediately'}</Text>
-                        <Text style={styles.detailHeroMetaText}>Closes: {selectedQuizForInfo.close_at ? formatDate(selectedQuizForInfo.close_at) : 'No close date'}</Text>
-                      </View>
-                    </LinearGradient>
-                  );
-                })()}
-
-                <View style={styles.detailCard}>
-                  <Text style={styles.detailCardTitle}>Instructions</Text>
-                  <FormattedText text={selectedQuizForInfo.instructions || 'No instructions.'} style={styles.detailCardBody} />
-                </View>
-                {!!selectedQuizForInfo.my_attempt?.score && (
-                  <View style={styles.detailCard}>
-                    <Text style={styles.detailCardTitle}>Latest Score</Text>
-                    <View style={styles.quizInfoScoreCard}>
-                      <ScoreRing score={selectedQuizForInfo.my_attempt?.score} maxScore={selectedQuizForInfo.my_attempt?.max_score || 0} size={120} />
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.previewLabel}>Class range</Text>
-                        <Text style={styles.previewValue}>Lowest: {quizInfoStats?.class_stats?.lowest_score ?? '-'}</Text>
-                        <Text style={styles.previewValue}>Highest: {quizInfoStats?.class_stats?.highest_score ?? '-'}</Text>
-                      </View>
-                    </View>
-                  </View>
-                )}
-                {(() => {
-                  const action = getQuizAction(selectedQuizForInfo);
-                  const actionStyle = QUIZ_ACTION_STYLES[action.variant];
-                  return (
-                    <TouchableOpacity
-                      style={[
-                        styles.primaryActionBtn,
-                        { backgroundColor: actionStyle.backgroundColor, borderColor: actionStyle.borderColor },
-                        action.disabled && { opacity: 0.55 },
-                      ]}
-                      disabled={action.disabled}
-                      onPress={action.onPress}
-                    >
-                      <Text style={[styles.primaryActionBtnText, { color: actionStyle.textColor }]}>{action.label}</Text>
-                    </TouchableOpacity>
-                  );
-                })()}
-              </>
-            )}
-          </ScrollView>
-        </View>
+        <QuizDetailsScreen
+          quiz={selectedQuizForInfo || undefined}
+          courseName={title}
+          quizStats={quizInfoStats}
+          onClose={() => setQuizInfoModalVisible(false)}
+          onStart={() => {
+            if (selectedQuizForInfo) {
+              setQuizInfoModalVisible(false);
+              confirmAndStartQuiz(selectedQuizForInfo, false);
+            }
+          }}
+          onResume={() => {
+            if (selectedQuizForInfo) {
+              setQuizInfoModalVisible(false);
+              confirmAndStartQuiz(selectedQuizForInfo, true);
+            }
+          }}
+          onViewResult={() => {
+            if (selectedQuizForInfo) {
+              setQuizInfoModalVisible(false);
+              viewQuizResult(selectedQuizForInfo);
+            }
+          }}
+        />
       </Modal>
 
       {/* Grade Activities Screen */}
