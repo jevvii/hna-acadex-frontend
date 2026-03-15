@@ -2054,9 +2054,9 @@ export function CourseScreen() {
 
                 return (
                   <>
-                    {renderAccordionSection('Overdue', overdue, Colors.accentRed)}
                     {renderAccordionSection('Upcoming', upcomingFiltered, Colors.primary)}
                     {renderAccordionSection('Undated', undated, colors.mutedForeground)}
+                    {renderAccordionSection('Overdue', overdue, Colors.accentRed)}
                   </>
                 );
               })()
