@@ -253,41 +253,51 @@ export function GradeActivitiesScreen({
     // Find the submission ID from initialSubmissions (more reliable than state)
     const submission = initialSubmissions.find(s => s._rowKey === rowKey);
     const submissionId = submission?.id;
+    const studentId = submission?.student_id;
 
     // Check if already loading or loaded
     if (loadedCommentsRef.current.has(rowKey)) {
       return;
     }
-    loadedCommentsRef.current.add(rowKey);
 
-    // If no submission exists yet (not_submitted status), there are no comments
-    if (!submissionId) {
-      setSubmissions(prev => prev.map(s =>
-        s._rowKey === rowKey ? { ...s, _comments: [], _commentsLoading: false } : s
-      ));
-      return;
-    }
+    // Mark as loading immediately to prevent duplicate requests
+    loadedCommentsRef.current.add(rowKey);
 
     setSubmissions(prev => prev.map(s =>
       s._rowKey === rowKey ? { ...s, _commentsLoading: true } : s
     ));
 
     try {
-      // Fetch comments for this specific submission from the server
-      // The server now filters by submission_id, ensuring accurate per-student conversations
-      const submissionComments = await activityCommentsApi.getByActivity(activity.id, submissionId);
+      // Fetch comments for this specific student from the server
+      // Use submission_id if available, otherwise use student_id
+      console.log(`[GradeActivities] Fetching comments for rowKey ${rowKey}, submissionId: ${submissionId || 'none'}, studentId: ${studentId || 'none'}`);
 
-      console.log(`[GradeActivities] Submission ${submissionId}: ${submissionComments.length} comments`);
+      let submissionComments: ActivityComment[];
+      if (submissionId) {
+        // Student has submitted - filter by submission_id
+        submissionComments = await activityCommentsApi.getByActivity(activity.id, { submissionId });
+      } else if (studentId) {
+        // Student hasn't submitted yet - filter by student_id
+        submissionComments = await activityCommentsApi.getByActivity(activity.id, { studentId });
+      } else {
+        // No submission and no student_id - should not happen
+        console.warn('[GradeActivities] No submissionId or studentId available');
+        submissionComments = [];
+      }
+
+      console.log(`[GradeActivities] Received ${submissionComments?.length || 0} comments`);
 
       setSubmissions(prev => prev.map(s =>
         s._rowKey === rowKey
-          ? { ...s, _comments: submissionComments, _commentsLoading: false }
+          ? { ...s, _comments: submissionComments || [], _commentsLoading: false }
           : s
       ));
     } catch (error) {
       console.error('Error loading comments:', error);
+      // Remove from loaded set on error so it can be retried
+      loadedCommentsRef.current.delete(rowKey);
       setSubmissions(prev => prev.map(s =>
-        s._rowKey === rowKey ? { ...s, _commentsLoading: false } : s
+        s._rowKey === rowKey ? { ...s, _comments: [], _commentsLoading: false } : s
       ));
     }
   }, [activity.id, initialSubmissions]);
@@ -308,6 +318,16 @@ export function GradeActivitiesScreen({
     const text = commentInputs[item._rowKey] || '';
     if (!text.trim() && selectedAttachments.length === 0) return;
 
+    // We need either a submission_id or student_id to post a comment
+    const studentId = item.student_id;
+    const submissionId = item.id;
+
+    if (!submissionId && !studentId) {
+      console.error('[GradeActivities] Cannot submit comment: no submission ID or student ID');
+      Alert.alert('Error', 'Cannot send comment. Unable to identify student.');
+      return;
+    }
+
     setSubmittingComments(prev => ({ ...prev, [item._rowKey]: true }));
     try {
       const files = selectedAttachments.map(att => ({
@@ -316,16 +336,19 @@ export function GradeActivitiesScreen({
         type: att.mimeType,
       }));
 
+      console.log(`[GradeActivities] Creating comment for submission ${submissionId || 'none'}, student ${studentId}, activity ${activity.id}`);
+
       const newComment = await activityCommentsApi.create(
         {
           activity_id: activity.id,
           content: text.trim() || undefined,
-          submission_id: item.id,
+          submission_id: submissionId, // Will be undefined if not submitted yet
         },
         files.length > 0 ? files as any : undefined
       );
 
       if (newComment) {
+        console.log(`[GradeActivities] Comment created successfully with ID ${newComment.id}, submission_id: ${newComment.submission_id}`);
         setSubmissions(prev => prev.map(s => {
           if (s._rowKey !== item._rowKey) return s;
           return {

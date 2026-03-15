@@ -70,14 +70,13 @@ export function TeacherActivityDetailsScreen({
   const fetchData = useCallback(async () => {
     if (!activityId) return;
     try {
-      const [activityData, submissionsData, commentsData] = await Promise.all([
+      const [activityData, submissionsData] = await Promise.all([
         api.get(`/activities/${activityId}/`),
         api.get(`/activities/${activityId}/submissions/`),
-        activityCommentsApi.getByActivity(activityId),
       ]);
       setActivity(activityData);
       setSubmissions(submissionsData || []);
-      setComments(commentsData || []);
+      // Comments are fetched separately when a student is expanded
     } catch (error) {
       console.error('Failed to fetch activity data:', error);
       Alert.alert('Error', 'Failed to load activity details.');
@@ -97,6 +96,51 @@ export function TeacherActivityDetailsScreen({
     setRefreshing(true);
     fetchData();
   }, [fetchData]);
+
+  // Load comments for the expanded student's submission
+  useEffect(() => {
+    const loadCommentsForSubmission = async () => {
+      // Clear comments when no student is expanded
+      if (!expandedStudentId) {
+        setComments([]);
+        return;
+      }
+
+      // Find the submission for the expanded student
+      const submission = submissions.find(s => s.student_id === expandedStudentId);
+      const submissionId = submission?.id;
+      const studentId = expandedStudentId; // The student_id is the expandedStudentId
+
+      // Fetch comments scoped to this student
+      // Use submission_id if available, otherwise use student_id
+      setCommentsLoading(true);
+      try {
+        let commentsData: ActivityComment[];
+        if (submissionId) {
+          // Student has submitted - filter by submission_id
+          console.log(`[TeacherActivityDetails] Fetching comments for submission ${submissionId}`);
+          commentsData = await activityCommentsApi.getByActivity(activityId!, { submissionId });
+        } else {
+          // Student hasn't submitted yet - filter by student_id
+          console.log(`[TeacherActivityDetails] Fetching comments for student ${studentId} (no submission)`);
+          commentsData = await activityCommentsApi.getByActivity(activityId!, { studentId });
+        }
+        console.log(`[TeacherActivityDetails] Received ${commentsData?.length || 0} comments`);
+        setComments(commentsData || []);
+      } catch (error) {
+        console.error('Failed to fetch comments:', error);
+        setComments([]);
+      } finally {
+        setCommentsLoading(false);
+      }
+    };
+
+    if (activityId && expandedStudentId) {
+      loadCommentsForSubmission();
+    } else {
+      setComments([]);
+    }
+  }, [activityId, expandedStudentId, submissions]);
 
   // Calculate class statistics
   const stats = useMemo(() => {
@@ -373,14 +417,25 @@ export function TeacherActivityDetailsScreen({
           )}
         </View>
 
-        {/* Comments Section */}
+        {/* Comments Section - scoped to the expanded student */}
         <View style={[styles.card, { backgroundColor: colors.surface }]}>
-          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Comments</Text>
-          {commentsLoading ? (
+          <View style={styles.commentsHeader}>
+            <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Comments</Text>
+            {expandedStudentId && (
+              <Text style={[styles.commentsScope, { color: colors.textSecondary }]}>
+                {submissions.find(s => s.student_id === expandedStudentId)?.student_name || 'Student'}
+              </Text>
+            )}
+          </View>
+          {!expandedStudentId ? (
+            <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+              Expand a student's submission to view their comments.
+            </Text>
+          ) : commentsLoading ? (
             <ActivityIndicator size="small" color={Colors.primary} />
           ) : comments.length === 0 ? (
             <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-              No comments on this activity yet.
+              No comments for this student's submission yet.
             </Text>
           ) : (
             <View style={styles.commentsList}>
@@ -529,6 +584,16 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     marginBottom: Spacing.sm,
   },
+  commentsHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: Spacing.sm,
+  },
+  commentsScope: {
+    fontSize: 13,
+    fontStyle: 'italic',
+  },
   instructionsText: {
     fontSize: 14,
     lineHeight: 20,
@@ -672,6 +737,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: Spacing.xs,
+  },
+  commentAuthor: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
   },
   commentAvatar: {
     width: 32,

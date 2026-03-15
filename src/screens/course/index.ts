@@ -8,4 +8,3 @@ export { CourseDiscussionsScreen } from './CourseDiscussionsScreen';
 export { CoursePeopleScreen } from './CoursePeopleScreen';
 export { CourseSyllabusScreen } from './CourseSyllabusScreen';
 export { TeacherActivityDetailsScreen } from './TeacherActivityDetailsScreen';
-export { TeacherActivityDetailsScreen } from './TeacherActivityDetailsScreen';
