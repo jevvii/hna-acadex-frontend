@@ -332,15 +332,22 @@ export function ActivityDetailsScreen({
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={[styles.actionCardOutline, { borderColor: Colors.primary, backgroundColor: colors.surface }]}
+          style={[
+            styles.actionCardOutline,
+            {
+              borderColor: isPastDue ? colors.mutedForeground : Colors.primary,
+              backgroundColor: isPastDue ? colors.muted : colors.surface,
+            },
+          ]}
           onPress={() => setReminderPickerVisible(true)}
           activeOpacity={0.9}
+          disabled={isPastDue}
         >
           <View style={styles.actionCardContent}>
-            <Text style={[styles.actionCardTextOutline, { color: Colors.primary }]}>
+            <Text style={[styles.actionCardTextOutline, { color: isPastDue ? colors.mutedForeground : Colors.primary }]}>
               Add due date reminder
             </Text>
-            <Ionicons name="chevron-forward" size={20} color={Colors.primary} />
+            <Ionicons name="chevron-forward" size={20} color={isPastDue ? colors.mutedForeground : Colors.primary} />
           </View>
         </TouchableOpacity>
       </View>

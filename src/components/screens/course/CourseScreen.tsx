@@ -2595,8 +2595,8 @@ export function CourseScreen() {
                   style={[styles.gradesTabBtn, gradebookView === 'table' && styles.gradesTabBtnActive]}
                   onPress={() => setGradebookView('table')}
                 >
-                  <Ionicons name="grid-outline" size={16} color={gradebookView === 'table' ? Colors.primary : colors.textSecondary} />
-                  <Text style={[styles.gradesTabText, { color: gradebookView === 'table' ? Colors.primary : colors.textSecondary }]}>
+                  <Ionicons name="grid-outline" size={16} color={gradebookView === 'table' ? '#FFFFFF' : colors.textSecondary} />
+                  <Text style={[styles.gradesTabText, { color: gradebookView === 'table' ? '#FFFFFF' : colors.textSecondary }]}>
                     Gradebook
                   </Text>
                 </TouchableOpacity>
@@ -2604,8 +2604,8 @@ export function CourseScreen() {
                   style={[styles.gradesTabBtn, gradebookView === 'export' && styles.gradesTabBtnActive]}
                   onPress={() => setGradebookView('export')}
                 >
-                  <Ionicons name="download-outline" size={16} color={gradebookView === 'export' ? Colors.primary : colors.textSecondary} />
-                  <Text style={[styles.gradesTabText, { color: gradebookView === 'export' ? Colors.primary : colors.textSecondary }]}>
+                  <Ionicons name="download-outline" size={16} color={gradebookView === 'export' ? '#FFFFFF' : colors.textSecondary} />
+                  <Text style={[styles.gradesTabText, { color: gradebookView === 'export' ? '#FFFFFF' : colors.textSecondary }]}>
                     Export
                   </Text>
                 </TouchableOpacity>
