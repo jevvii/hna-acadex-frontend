@@ -1734,10 +1734,36 @@ export function CourseScreen() {
     try {
       // Fetch both attempt stats and quiz details (including question count)
       const [attemptData, quizData] = await Promise.all([
-        api.get(`/quizzes/${quiz.id}/my-latest-attempt/`),
-        api.get(`/quizzes/${quiz.id}/`),
+        api.get(`/quizzes/${quiz.id}/my-latest-attempt/`).catch((err) => {
+          console.warn('[openQuizInfo] my-latest-attempt failed:', err);
+          return null; // Allow graceful fallback
+        }),
+        api.get(`/quizzes/${quiz.id}/`).catch((err) => {
+          console.warn('[openQuizInfo] quiz details failed:', err);
+          return null; // Allow graceful fallback
+        }),
       ]);
-      setQuizInfoStats(attemptData);
+      console.log('[openQuizInfo] attemptData:', attemptData);
+      console.log('[openQuizInfo] attemptData.attempts:', attemptData?.attempts);
+
+      // If attemptData is available, use it; otherwise fallback to quiz.my_attempt
+      if (attemptData) {
+        setQuizInfoStats(attemptData);
+      } else if (quiz.my_attempt) {
+        // Fallback: construct stats from quiz.my_attempt
+        setQuizInfoStats({
+          attempt_id: quiz.my_attempt.id,
+          score: quiz.my_attempt.score,
+          max_score: quiz.my_attempt.max_score,
+          pending_manual_grading: quiz.my_attempt.pending_manual_grading,
+          attempt_number: quiz.my_attempt.attempt_number,
+          attempts_used: quiz.my_attempt.attempts_used,
+          attempt_limit: quiz.my_attempt.attempt_limit ?? quiz.attempt_limit,
+          attempts_remaining: quiz.my_attempt.attempts_remaining,
+          attempts: [], // No detailed attempt history available
+        });
+      }
+
       // Merge quiz details (including question_count) into selectedQuizForInfo
       if (quizData) {
         setSelectedQuizForInfo({
@@ -1747,8 +1773,24 @@ export function CourseScreen() {
           questions: quizData.questions ?? quiz.questions,
         });
       }
-    } catch {
-      setQuizInfoStats(null);
+    } catch (error) {
+      console.error('[openQuizInfo] Error fetching quiz stats:', error);
+      // Fallback to quiz.my_attempt if available
+      if (quiz.my_attempt) {
+        setQuizInfoStats({
+          attempt_id: quiz.my_attempt.id,
+          score: quiz.my_attempt.score,
+          max_score: quiz.my_attempt.max_score,
+          pending_manual_grading: quiz.my_attempt.pending_manual_grading,
+          attempt_number: quiz.my_attempt.attempt_number,
+          attempts_used: quiz.my_attempt.attempts_used,
+          attempt_limit: quiz.my_attempt.attempt_limit ?? quiz.attempt_limit,
+          attempts_remaining: quiz.my_attempt.attempts_remaining,
+          attempts: [],
+        });
+      } else {
+        setQuizInfoStats(null);
+      }
     }
   };
 
@@ -3057,7 +3099,7 @@ export function CourseScreen() {
             <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Quiz Result</Text>
             <View style={{ width: 48 }} />
           </View>
-          <View style={styles.modalBody}>
+          <ScrollView style={styles.modalBody} contentContainerStyle={styles.modalBodyContent} showsVerticalScrollIndicator={false}>
             <View style={styles.detailCard}>
               <Text style={styles.detailCardTitle}>Your Result</Text>
               <View style={styles.resultRingWrap}>
@@ -3092,7 +3134,7 @@ export function CourseScreen() {
                 )}
               </View>
             </View>
-          </View>
+          </ScrollView>
         </View>
       </Modal>
 
@@ -4099,6 +4141,7 @@ const styles = StyleSheet.create({
   modalTitle: { fontSize: 17, fontWeight: '700' },
   modalSave: { fontSize: 16, color: Colors.primary, fontWeight: '700' },
   modalBody: { padding: Spacing.xl, paddingBottom: 80 },
+  modalBodyContent: { paddingBottom: Spacing.xxl },
   assignmentHeaderCard: {
     backgroundColor: '#FFFFFF',
     borderWidth: 1,

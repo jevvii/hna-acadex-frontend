@@ -104,6 +104,16 @@ export function QuizDetailsScreen({
 
   const quiz = propQuiz;
 
+  // Debug log for quizStats
+  useEffect(() => {
+    console.log('[QuizDetailsScreen] quizStats:', quizStats);
+    console.log('[QuizDetailsScreen] quizStats.attempts:', quizStats?.attempts);
+    console.log('[QuizDetailsScreen] attempts length:', quizStats?.attempts?.length);
+    console.log('[QuizDetailsScreen] quiz.my_attempt:', quiz?.my_attempt);
+    console.log('[QuizDetailsScreen] attemptsUsed:', attemptsUsed);
+    console.log('[QuizDetailsScreen] attemptsLimit:', attemptsLimit);
+  }, [quizStats, quiz?.my_attempt, attemptsUsed, attemptsLimit]);
+
   // Derive quiz status
   const quizStatus = useMemo(() => {
     if (!quiz) return 'closed';
@@ -495,51 +505,132 @@ export function QuizDetailsScreen({
             </Text>
           </View>
 
-          {/* Attempt History - show when multiple attempts allowed and has attempts */}
-          {attemptsLimit > 1 && quizStats?.attempts && quizStats.attempts.length > 0 && (
-            <View style={styles.infoItem}>
-              <Text style={[styles.infoLabel, { color: colors.mutedForeground }]}>ATTEMPT HISTORY</Text>
-              <View style={styles.attemptsList}>
-                {quizStats.attempts.map((attempt: any, index: number) => {
-                  const isAutoSubmitted = attempt.auto_submitted || attempt.was_auto_submitted;
-                  const hasScore = attempt.score !== null && attempt.score !== undefined;
-                  const isPending = attempt.pending_manual_grading;
+          {/* Attempt History - show when there are attempts */}
+          {(() => {
+            // Show attempt history if available
+            if (quizStats?.attempts && quizStats.attempts.length > 0) {
+              // Find the attempt with the highest score for highlighting
+              const attemptsWithScores = quizStats.attempts.filter((a: any) => a.score !== null && a.score !== undefined);
+              const highestScoreAttempt = attemptsWithScores.length > 0
+                ? attemptsWithScores.reduce((max: any, a: any) => (a.score > max.score ? a : max), attemptsWithScores[0])
+                : null;
 
-                  return (
-                    <View
-                      key={attempt.attempt_number || attempt.id || index}
-                      style={[styles.attemptRow, { backgroundColor: colors.background, borderColor: colors.border }]}
-                    >
-                      <View style={styles.attemptRowLeft}>
-                        <Text style={[styles.attemptNumber, { color: colors.textPrimary }]}>
-                          Attempt {attempt.attempt_number || index + 1}
-                        </Text>
-                        {isAutoSubmitted && (
-                          <View style={styles.autoSubmitBadge}>
-                            <Ionicons name="warning-outline" size={12} color="#B45309" />
-                            <Text style={styles.autoSubmitText}>Auto-submitted</Text>
+              return (
+                <View style={styles.infoItem}>
+                  <View style={styles.attemptHistoryHeader}>
+                    <Text style={[styles.infoLabel, { color: colors.mutedForeground }]}>ATTEMPT HISTORY</Text>
+                    <Text style={[styles.attemptHistoryNote, { color: colors.mutedForeground }]}>(Highest is recorded)</Text>
+                  </View>
+                  <View style={styles.attemptsList}>
+                    {quizStats.attempts.map((attempt: any, index: number) => {
+                      const isAutoSubmitted = attempt.auto_submitted || attempt.was_auto_submitted;
+                      const hasScore = attempt.score !== null && attempt.score !== undefined;
+                      const isPending = attempt.pending_manual_grading;
+                      const isHighest = highestScoreAttempt && attempt.attempt_number === highestScoreAttempt.attempt_number;
+
+                      return (
+                        <View
+                          key={attempt.attempt_number || attempt.id || index}
+                          style={[
+                            styles.attemptRow,
+                            {
+                              backgroundColor: isHighest ? 'rgba(34, 197, 94, 0.08)' : colors.background,
+                              borderColor: isHighest ? Colors.success : colors.border,
+                              borderWidth: isHighest ? 1 : 0,
+                              borderRadius: isHighest ? Radius.md : 0,
+                              paddingHorizontal: isHighest ? Spacing.sm : 0,
+                              paddingVertical: isHighest ? Spacing.md : Spacing.sm,
+                            },
+                          ]}
+                        >
+                          <View style={styles.attemptRowLeft}>
+                            <View style={styles.attemptRowTitleContainer}>
+                              <Text style={[styles.attemptNumber, { color: colors.textPrimary }]}>
+                                Attempt {attempt.attempt_number || index + 1}
+                              </Text>
+                              {isHighest && hasScore && (
+                                <View style={styles.highestBadge}>
+                                  <Ionicons name="trophy" size={12} color="#16A34A" />
+                                  <Text style={styles.highestBadgeText}>Highest</Text>
+                                </View>
+                              )}
+                            </View>
+                            {isAutoSubmitted && (
+                              <View style={styles.autoSubmitBadge}>
+                                <Ionicons name="warning-outline" size={12} color="#B45309" />
+                                <Text style={styles.autoSubmitText}>Auto-submitted</Text>
+                              </View>
+                            )}
+                            {isPending && !hasScore && (
+                              <Text style={styles.pendingText}>Pending grading</Text>
+                            )}
                           </View>
-                        )}
-                        {isPending && !hasScore && (
-                          <Text style={styles.pendingText}>Pending grading</Text>
-                        )}
-                      </View>
-                      <View style={styles.attemptRowRight}>
-                        <Text style={[styles.attemptScore, { color: hasScore ? colors.textPrimary : colors.mutedForeground }]}>
-                          {hasScore ? `${attempt.score} / ${attempt.max_score ?? quiz.points ?? 0}` : '—'}
-                        </Text>
-                        {attempt.time_taken_seconds != null && (
-                          <Text style={[styles.attemptTime, { color: colors.mutedForeground }]}>
-                            {Math.floor(attempt.time_taken_seconds / 60)}m {attempt.time_taken_seconds % 60}s
-                          </Text>
-                        )}
-                      </View>
-                    </View>
-                  );
-                })}
-              </View>
-            </View>
-          )}
+                          <View style={styles.attemptRowRight}>
+                            <Text style={[styles.attemptScore, { color: hasScore ? colors.textPrimary : colors.mutedForeground }]}>
+                              {hasScore ? `${attempt.score} / ${attempt.max_score ?? quiz.points ?? 0}` : '—'}
+                            </Text>
+                            {(attempt.time_taken_seconds ?? attempt.duration_seconds) != null && (
+                              <Text style={[styles.attemptTime, { color: colors.mutedForeground }]}>
+                                {Math.floor((attempt.time_taken_seconds ?? attempt.duration_seconds) / 60)}m {(attempt.time_taken_seconds ?? attempt.duration_seconds) % 60}s
+                              </Text>
+                            )}
+                          </View>
+                        </View>
+                      );
+                    })}
+                  </View>
+                </View>
+              );
+            }
+
+            // Show loading state if quizStats is not yet loaded but attempts were used
+            if (!quizStats && attemptsUsed > 0) {
+              return (
+                <View style={styles.infoItem}>
+                  <View style={styles.attemptHistoryHeader}>
+                    <Text style={[styles.infoLabel, { color: colors.mutedForeground }]}>ATTEMPT HISTORY</Text>
+                    <Text style={[styles.attemptHistoryNote, { color: colors.mutedForeground }]}>(Highest is recorded)</Text>
+                  </View>
+                  <View style={styles.attemptsLoading}>
+                    <ActivityIndicator size="small" color={colors.mutedForeground} />
+                    <Text style={[styles.loadingText, { color: colors.mutedForeground }]}>Loading attempts...</Text>
+                  </View>
+                </View>
+              );
+            }
+
+            // Show fallback when quizStats exists but attempts array is empty (API returned data but no history)
+            if (quizStats && (!quizStats.attempts || quizStats.attempts.length === 0) && attemptsUsed > 0) {
+              return (
+                <View style={styles.infoItem}>
+                  <View style={styles.attemptHistoryHeader}>
+                    <Text style={[styles.infoLabel, { color: colors.mutedForeground }]}>ATTEMPT HISTORY</Text>
+                    <Text style={[styles.attemptHistoryNote, { color: colors.mutedForeground }]}>(Highest is recorded)</Text>
+                  </View>
+                  <Text style={[styles.noHistoryText, { color: colors.mutedForeground }]}>
+                    {attemptsUsed} attempt{attemptsUsed !== 1 ? 's' : ''} recorded. Detailed history unavailable.
+                  </Text>
+                </View>
+              );
+            }
+
+            // Show fallback when quizStats exists but attempts array is empty (API returned data but no history)
+            if (quizStats && (!quizStats.attempts || quizStats.attempts.length === 0) && attemptsUsed > 0) {
+              return (
+                <View style={styles.infoItem}>
+                  <View style={styles.attemptHistoryHeader}>
+                    <Text style={[styles.infoLabel, { color: colors.mutedForeground }]}>ATTEMPT HISTORY</Text>
+                    <Text style={[styles.attemptHistoryNote, { color: colors.mutedForeground }]}>(Highest is recorded)</Text>
+                  </View>
+                  <Text style={[styles.noHistoryText, { color: colors.mutedForeground }]}>
+                    {attemptsUsed} attempt{attemptsUsed !== 1 ? 's' : ''} recorded. Detailed history unavailable.
+                  </Text>
+                </View>
+              );
+            }
+
+            return null;
+          })()}
         </View>
 
         {/* Bottom padding for fixed button */}
@@ -893,6 +984,11 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#DC2626',
   },
+  pendingText: {
+    fontSize: 11,
+    color: '#6B7280',
+    fontStyle: 'italic',
+  },
   attemptRowRight: {
     alignItems: 'flex-end',
   },
@@ -903,6 +999,56 @@ const styles = StyleSheet.create({
   attemptDuration: {
     fontSize: 12,
     marginTop: 2,
+  },
+  attemptHistoryHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+    marginBottom: Spacing.sm,
+  },
+  attemptHistoryNote: {
+    fontSize: 12,
+    fontStyle: 'italic',
+  },
+  attemptsList: {
+    gap: Spacing.xs,
+  },
+  attemptRowTitleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+  },
+  highestBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    backgroundColor: '#DCFCE7',
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 2,
+    borderRadius: Radius.sm,
+  },
+  highestBadgeText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#16A34A',
+  },
+  attemptTime: {
+    fontSize: 12,
+    marginTop: 2,
+  },
+  attemptsLoading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    paddingVertical: Spacing.md,
+  },
+  loadingText: {
+    fontSize: 14,
+  },
+  noHistoryText: {
+    fontSize: 14,
+    fontStyle: 'italic',
+    marginTop: Spacing.sm,
   },
 });
 
