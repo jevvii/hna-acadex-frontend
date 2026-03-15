@@ -2816,8 +2816,20 @@ export function CourseScreen() {
         <KeyboardAvoidingView style={[styles.modalWrap, { backgroundColor: colors.background }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <View style={[styles.modalHeader, { borderBottomColor: colors.border, backgroundColor: colors.surface }]}> 
             <TouchableOpacity onPress={() => setModalVisible(false)}><Text style={[styles.modalCancel, { color: colors.textSecondary }]}>Cancel</Text></TouchableOpacity>
-            <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>{modalTitle}</Text>
-            <TouchableOpacity onPress={saveItem} disabled={saving}>{saving ? <ActivityIndicator size="small" color={Colors.primary} /> : <Text style={styles.modalSave}>Save</Text>}</TouchableOpacity>
+            <Text style={[styles.modalTitle, { color: Colors.primary }]}>{modalTitle}</Text>
+            <TouchableOpacity
+              onPress={saveItem}
+              disabled={saving || (activeTab === 'files' && !selectedCourseMaterialFile && !form.file_url.trim())}
+            >
+              {saving ? (
+                <ActivityIndicator size="small" color={Colors.primary} />
+              ) : (
+                <Text style={[
+                  styles.modalSave,
+                  (activeTab === 'files' && !selectedCourseMaterialFile && !form.file_url.trim()) && styles.modalSaveDisabled
+                ]}>Save</Text>
+              )}
+            </TouchableOpacity>
           </View>
 
           <ScrollView contentContainerStyle={styles.modalBody} keyboardShouldPersistTaps="handled">
@@ -2825,7 +2837,7 @@ export function CourseScreen() {
               <Field label="Title" value={form.title} onChangeText={(v) => setForm((p) => ({ ...p, title: v }))} headerLabel />
             )}
 
-            {(activeTab === 'assignments' || activeTab === 'quizzes' || activeTab === 'files') && (
+            {(activeTab === 'assignments' || activeTab === 'quizzes') && (
               <View style={styles.fieldWrap}>
                 <Text style={styles.fieldLabel}>Week Topic</Text>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.topicPickerRow}>
@@ -2933,34 +2945,128 @@ export function CourseScreen() {
 
             {activeTab === 'files' && (
               <>
-                <Field label="File Name" value={form.file_name} onChangeText={(v) => setForm((p) => ({ ...p, file_name: v }))} />
-                <Field label="File URL" value={form.file_url} onChangeText={(v) => setForm((p) => ({ ...p, file_url: v }))} />
-                <Field label="File Type" value={form.file_type} onChangeText={(v) => setForm((p) => ({ ...p, file_type: v }))} />
-                <Field label="Folder Path" value={form.folder_path} onChangeText={(v) => setForm((p) => ({ ...p, folder_path: v }))} />
-                <Field label="Category" value={form.category} onChangeText={(v) => setForm((p) => ({ ...p, category: v }))} />
+                {/* Week Topic Section - Chip Selector with wrap layout */}
                 <View style={styles.fieldWrap}>
-                  <Text style={styles.fieldLabel}>Upload Learning Material</Text>
-                  <TouchableOpacity style={styles.uploadSecondaryBtn} onPress={pickCourseMaterialFile}>
-                    <Text style={styles.uploadSecondaryBtnText}>Choose File (PDF/DOCX/ZIP/PNG/JPG)</Text>
-                  </TouchableOpacity>
-                  {!!selectedCourseMaterialFile && (
-                    <View style={styles.uploadedFileCard}>
-                      <View style={styles.uploadedFileRow}>
-                        <View style={styles.uploadedFileLeft}>
-                          <View style={styles.uploadedFileIconWrap}>
-                            <Ionicons name="cloud-upload-outline" size={18} color="#007ACC" />
-                          </View>
-                          <View style={styles.uploadedFileInfo}>
-                            <Text style={styles.uploadedFileName} numberOfLines={1}>{selectedCourseMaterialFile.name}</Text>
-                            <Text style={styles.uploadedFileSize}>{formatFileSize(selectedCourseMaterialFile.size)}</Text>
-                          </View>
+                  <Text style={styles.sectionLabel}>Week Topic</Text>
+                  <View style={styles.chipWrapContainer}>
+                    <TouchableOpacity
+                      style={[styles.newChip, !selectedWeeklyModuleId && styles.newChipActive]}
+                      onPress={() => setSelectedWeeklyModuleId(null)}
+                    >
+                      <Text style={[styles.newChipText, !selectedWeeklyModuleId && styles.newChipTextActive]}>Unassigned</Text>
+                    </TouchableOpacity>
+                    {modules.map((m) => (
+                      <TouchableOpacity
+                        key={m.id}
+                        style={[styles.newChip, selectedWeeklyModuleId === m.id && styles.newChipActive]}
+                        onPress={() => setSelectedWeeklyModuleId(m.id)}
+                      >
+                        <Text style={[styles.newChipText, selectedWeeklyModuleId === m.id && styles.newChipTextActive]}>
+                          Week {m.week_number}: {m.title}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+
+                {/* File Upload Hero - Drop Zone */}
+                <View style={styles.fieldWrap}>
+                  <Text style={styles.sectionLabel}>Upload File</Text>
+                  {!selectedCourseMaterialFile ? (
+                    <TouchableOpacity style={styles.dropZoneHero} onPress={pickCourseMaterialFile} activeOpacity={0.85}>
+                      <Ionicons name="cloud-upload-outline" size={36} color={Colors.primary} />
+                      <Text style={styles.dropZonePrimaryText}>Tap to choose a file</Text>
+                      <Text style={styles.dropZoneSecondaryText}>PDF, DOCX, ZIP, PNG, JPG</Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <View style={styles.filePreviewCard}>
+                      <View style={styles.filePreviewRow}>
+                        <View style={styles.filePreviewThumbnail}>
+                          {selectedCourseMaterialFile.mimeType?.startsWith('image/') ? (
+                            <RNImage source={{ uri: selectedCourseMaterialFile.uri }} style={styles.filePreviewImage} resizeMode="cover" />
+                          ) : (
+                            <Ionicons
+                              name={
+                                selectedCourseMaterialFile.mimeType?.includes('pdf') ? 'document-text-outline' :
+                                selectedCourseMaterialFile.mimeType?.includes('zip') ? 'archive-outline' :
+                                'document-outline'
+                              }
+                              size={28}
+                              color={
+                                selectedCourseMaterialFile.mimeType?.includes('pdf') ? '#E53935' :
+                                selectedCourseMaterialFile.mimeType?.includes('zip') ? '#FFA000' :
+                                Colors.primary
+                              }
+                            />
+                          )}
                         </View>
-                        <TouchableOpacity onPress={() => setSelectedCourseMaterialFile(null)} style={styles.uploadFileRemoveBtn}>
-                          <Ionicons name="close-circle" size={18} color="#DC2626" />
+                        <View style={styles.filePreviewInfo}>
+                          <Text style={styles.filePreviewName} numberOfLines={1}>{form.file_name || selectedCourseMaterialFile.name}</Text>
+                          <Text style={styles.filePreviewSize}>{formatFileSize(selectedCourseMaterialFile.size)}</Text>
+                          <Text style={styles.filePreviewType}>
+                            {(selectedCourseMaterialFile.name.split('.').pop() || 'file').toUpperCase()}
+                          </Text>
+                        </View>
+                        <TouchableOpacity onPress={() => setSelectedCourseMaterialFile(null)} style={styles.filePreviewRemoveBtn}>
+                          <Ionicons name="close-circle" size={22} color="#E53935" />
                         </TouchableOpacity>
                       </View>
                     </View>
                   )}
+                </View>
+
+                {/* Or Divider */}
+                <View style={styles.orDividerContainer}>
+                  <View style={styles.orDividerLine} />
+                  <Text style={styles.orDividerText}>or paste a URL instead</Text>
+                  <View style={styles.orDividerLine} />
+                </View>
+
+                {/* File URL Field */}
+                <View style={styles.fieldWrap}>
+                  <Text style={styles.sectionLabel}>File URL</Text>
+                  <TextInput
+                    style={[styles.newInput, { color: colors.textPrimary, borderColor: colors.border }]}
+                    placeholder="https://..."
+                    placeholderTextColor="#AAAAAA"
+                    value={form.file_url}
+                    onChangeText={(v) => setForm((p) => ({ ...p, file_url: v }))}
+                    autoCapitalize="none"
+                    keyboardType="url"
+                  />
+                  <Text style={styles.fieldNote}>Auto-filled when a file is selected above</Text>
+                </View>
+
+                {/* Display Name Field */}
+                <View style={styles.fieldWrap}>
+                  <Text style={styles.sectionLabel}>Display Name</Text>
+                  <TextInput
+                    style={[styles.newInput, { color: colors.textPrimary, borderColor: colors.border }]}
+                    placeholder="e.g. Week 1 Lecture Slides"
+                    placeholderTextColor="#AAAAAA"
+                    value={form.file_name}
+                    onChangeText={(v) => setForm((p) => ({ ...p, file_name: v }))}
+                    autoCapitalize="words"
+                  />
+                  <Text style={styles.fieldNote}>Auto-filled from filename, editable</Text>
+                </View>
+
+                {/* Category - Chip Selector */}
+                <View style={styles.fieldWrap}>
+                  <Text style={styles.sectionLabel}>Category</Text>
+                  <View style={styles.chipWrapContainer}>
+                    {['general', 'lecture', 'activity', 'reference', 'assessment'].map((cat) => (
+                      <TouchableOpacity
+                        key={cat}
+                        style={[styles.newChip, form.category === cat && styles.newChipActive]}
+                        onPress={() => setForm((p) => ({ ...p, category: cat }))}
+                      >
+                        <Text style={[styles.newChipText, form.category === cat && styles.newChipTextActive]}>
+                          {cat.charAt(0).toUpperCase() + cat.slice(1)}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
                 </View>
               </>
             )}
@@ -4452,6 +4558,7 @@ const styles = StyleSheet.create({
   modalCancel: { fontSize: 16 },
   modalTitle: { fontSize: 17, fontWeight: '700' },
   modalSave: { fontSize: 16, color: Colors.primary, fontWeight: '700' },
+  modalSaveDisabled: { color: '#CCCCCC' },
   modalBody: { padding: Spacing.xl, paddingBottom: 80 },
   modalBodyContent: { paddingBottom: Spacing.xxl },
   assignmentHeaderCard: {
@@ -4672,6 +4779,71 @@ const styles = StyleSheet.create({
   },
   topicChipText: { fontSize: 12, color: '#334155', fontWeight: '500' },
   topicChipTextActive: { color: Colors.primary, fontWeight: '700' },
+  // New file upload redesign styles
+  sectionLabel: { fontSize: 13, fontWeight: '600', color: '#555555', marginBottom: 8 },
+  chipWrapContainer: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  newChip: {
+    borderWidth: 1.5,
+    borderColor: '#CCCCCC',
+    borderRadius: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    backgroundColor: '#FFFFFF',
+  },
+  newChipActive: {
+    backgroundColor: Colors.primary,
+    borderColor: Colors.primary,
+  },
+  newChipText: { fontSize: 13, fontWeight: '500', color: '#555555' },
+  newChipTextActive: { color: '#FFFFFF', fontWeight: '600' },
+  dropZoneHero: {
+    height: 140,
+    backgroundColor: '#EEF2F9',
+    borderWidth: 2,
+    borderColor: Colors.primaryLight,
+    borderRadius: 14,
+    borderStyle: 'dashed',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dropZonePrimaryText: { fontSize: 15, fontWeight: '600', color: Colors.primary, marginTop: 8 },
+  dropZoneSecondaryText: { fontSize: 12, color: '#888888', marginTop: 4 },
+  filePreviewCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  filePreviewRow: { flexDirection: 'row', alignItems: 'center' },
+  filePreviewThumbnail: {
+    width: 48,
+    height: 48,
+    borderRadius: 8,
+    backgroundColor: '#EEF2F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  filePreviewImage: { width: 48, height: 48, borderRadius: 8 },
+  filePreviewInfo: { flex: 1, marginLeft: 12 },
+  filePreviewName: { fontSize: 14, fontWeight: '600', color: '#1A1A1A' },
+  filePreviewSize: { fontSize: 12, color: '#888888', marginTop: 2 },
+  filePreviewType: { fontSize: 11, color: Colors.primaryLight, fontWeight: '600', marginTop: 2, textTransform: 'uppercase' as const },
+  filePreviewRemoveBtn: { padding: 4 },
+  orDividerContainer: { flexDirection: 'row', alignItems: 'center', marginBottom: 20 },
+  orDividerLine: { flex: 1, height: 1, backgroundColor: '#E0E0E0' },
+  orDividerText: { fontSize: 12, color: '#AAAAAA', marginHorizontal: 12 },
+  newInput: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 15,
+  },
+  fieldNote: { fontSize: 11, color: '#888888', marginTop: 4 },
   datePickerWrap: { marginBottom: Spacing.md },
   dateHint: { fontSize: 12, color: '#475569', marginTop: 4 },
   datePickerButton: {

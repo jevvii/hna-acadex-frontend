@@ -4,8 +4,10 @@ import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
   RefreshControl, ActivityIndicator, Alert,
   Modal, TextInput, KeyboardAvoidingView, Platform, ScrollView,
+  Animated,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { Swipeable } from 'react-native-gesture-handler';
 import { useRouter } from 'expo-router';
 import { api } from '@/lib/api';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -311,58 +313,102 @@ export function TodoScreen() {
           const isLinkedAcademicItem = !!item.activity_id || !!item.quiz_id;
           const isMissing = Boolean(overdue && isLinkedAcademicItem);
           const canOpenLinked = Boolean(isLinkedAcademicItem && !isMissing && !item.is_done);
-          return (
-            <TouchableOpacity
-              activeOpacity={canOpenLinked ? 0.85 : 1}
-              disabled={!canOpenLinked}
-              onPress={() => openAcademicTodo(item)}
-              style={[
-              styles.row,
-              isMissing && styles.rowMissing,
-              { backgroundColor: colors.surface, opacity: item.is_done ? 0.55 : 1 },
-              Shadows.sm,
-            ]}
-            >
-              <View style={styles.rowContent}>
-                <Text style={[
-                  styles.rowTitle,
-                  { color: isMissing ? Colors.accentRed : colors.textPrimary, textDecorationLine: item.is_done ? 'line-through' : 'none' },
-                ]}>
-                  {item.title}
-                </Text>
-                {item.description ? (
-                  <Text style={[styles.rowNotes, { color: colors.textSecondary }]} numberOfLines={1}>
-                    {item.description}
-                  </Text>
-                ) : null}
-                {due && (
-                  <View style={styles.dueRow}>
-                    <Ionicons
-                      name={overdue ? 'warning-outline' : 'time-outline'}
-                      size={11}
-                      color={overdue ? Colors.accentRed : colors.textSecondary}
-                    />
-                    <Text style={[styles.dueText, { color: overdue ? Colors.accentRed : colors.textSecondary }]}>
-                      {overdue ? 'Overdue · ' : ''}{due.label}
-                    </Text>
-                  </View>
-                )}
-                {(item.activity_id || item.quiz_id) && (
-                  <View style={styles.courseTag}>
-                    <Ionicons name={item.quiz_id ? 'help-circle-outline' : 'book-outline'} size={11} color={isMissing ? Colors.accentRed : Colors.primaryLight} />
-                    <Text style={[styles.courseTagText, { color: isMissing ? Colors.accentRed : Colors.primaryLight }]}>
-                      {item.quiz_id ? 'Course Quiz' : 'Course Activity'}
-                    </Text>
-                    {isMissing && <Text style={[styles.courseTagText, { color: Colors.accentRed, marginLeft: 6 }]}>Missing</Text>}
-                    {canOpenLinked && <Text style={[styles.courseTagText, { marginLeft: 6, color: colors.textSecondary }]}>Tap to open</Text>}
-                  </View>
-                )}
-              </View>
+          // Academic items (activities/quizzes) cannot be deleted from To Do
+          const canDelete = !isLinkedAcademicItem;
 
-              <TouchableOpacity onPress={() => deleteTodo(item.id)} style={styles.deleteBtn} disabled={isMissing}>
-                <Ionicons name="trash-outline" size={16} color={colors.mutedForeground} />
+          const renderRightActions = (_progress: Animated.AnimatedInterpolation<number>, dragX: Animated.AnimatedInterpolation<number>) => {
+            const trans = dragX.interpolate({
+              inputRange: [-100, 0],
+              outputRange: [0, 100],
+              extrapolate: 'clamp',
+            });
+            return (
+              <Animated.View style={{ transform: [{ translateX: trans }] }}>
+                <TouchableOpacity
+                  style={styles.deleteAction}
+                  onPress={() => deleteTodo(item.id)}
+                >
+                  <Ionicons name="trash-outline" size={22} color="#FFFFFF" />
+                </TouchableOpacity>
+              </Animated.View>
+            );
+          };
+
+          const renderLeftActions = (_progress: Animated.AnimatedInterpolation<number>, dragX: Animated.AnimatedInterpolation<number>) => {
+            const trans = dragX.interpolate({
+              inputRange: [0, 100],
+              outputRange: [-100, 0],
+              extrapolate: 'clamp',
+            });
+            return (
+              <Animated.View style={{ transform: [{ translateX: trans }] }}>
+                <TouchableOpacity
+                  style={styles.deleteAction}
+                  onPress={() => deleteTodo(item.id)}
+                >
+                  <Ionicons name="trash-outline" size={22} color="#FFFFFF" />
+                </TouchableOpacity>
+              </Animated.View>
+            );
+          };
+
+          return (
+            <Swipeable
+              enabled={canDelete}
+              renderRightActions={canDelete ? renderRightActions : undefined}
+              renderLeftActions={canDelete ? renderLeftActions : undefined}
+              overshootRight={false}
+              overshootLeft={false}
+              friction={2}
+            >
+              <TouchableOpacity
+                activeOpacity={canOpenLinked ? 0.85 : 1}
+                disabled={!canOpenLinked}
+                onPress={() => openAcademicTodo(item)}
+                style={[
+                  styles.row,
+                  isMissing && styles.rowMissing,
+                  { backgroundColor: colors.surface, opacity: item.is_done ? 0.55 : 1 },
+                  Shadows.sm,
+                ]}
+              >
+                <View style={styles.rowContent}>
+                  <Text style={[
+                    styles.rowTitle,
+                    { color: isMissing ? Colors.accentRed : colors.textPrimary, textDecorationLine: item.is_done ? 'line-through' : 'none' },
+                  ]}>
+                    {item.title}
+                  </Text>
+                  {item.description ? (
+                    <Text style={[styles.rowNotes, { color: colors.textSecondary }]} numberOfLines={1}>
+                      {item.description}
+                    </Text>
+                  ) : null}
+                  {due && (
+                    <View style={styles.dueRow}>
+                      <Ionicons
+                        name={overdue ? 'warning-outline' : 'time-outline'}
+                        size={11}
+                        color={overdue ? Colors.accentRed : colors.textSecondary}
+                      />
+                      <Text style={[styles.dueText, { color: overdue ? Colors.accentRed : colors.textSecondary }]}>
+                        {overdue ? 'Overdue · ' : ''}{due.label}
+                      </Text>
+                    </View>
+                  )}
+                  {(item.activity_id || item.quiz_id) && (
+                    <View style={styles.courseTag}>
+                      <Ionicons name={item.quiz_id ? 'help-circle-outline' : 'book-outline'} size={11} color={isMissing ? Colors.accentRed : Colors.primaryLight} />
+                      <Text style={[styles.courseTagText, { color: isMissing ? Colors.accentRed : Colors.primaryLight }]}>
+                        {item.quiz_id ? 'Course Quiz' : 'Course Activity'}
+                      </Text>
+                      {isMissing && <Text style={[styles.courseTagText, { color: Colors.accentRed, marginLeft: 6 }]}>Missing</Text>}
+                      {canOpenLinked && <Text style={[styles.courseTagText, { marginLeft: 6, color: colors.textSecondary }]}>Tap to open</Text>}
+                    </View>
+                  )}
+                </View>
               </TouchableOpacity>
-            </TouchableOpacity>
+            </Swipeable>
           );
         }}
       />
@@ -417,7 +463,15 @@ const styles = StyleSheet.create({
   dueText: { fontSize: 11 },
   courseTag: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 },
   courseTagText: { fontSize: 11, fontWeight: '500' },
-  deleteBtn: { padding: 4 },
+  deleteAction: {
+    backgroundColor: '#DC2626',
+    justifyContent: 'center',
+    alignItems: 'center',
+    width: 80,
+    height: '100%',
+    borderRadius: Radius.lg,
+    marginVertical: Spacing.sm,
+  },
   fab: {
     position: 'absolute', bottom: 100, right: Spacing.xl,
     width: 56, height: 56, borderRadius: 28,

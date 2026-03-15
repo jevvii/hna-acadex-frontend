@@ -23,7 +23,9 @@ export default function TabsLayout() {
         api.get('/todos/'),
         api.get('/notifications/'),
       ]);
-      const pending = (todosData || []).filter((t: any) => !t.is_done).length;
+      // Only count personal todos (not linked to activities/quizzes) for the badge
+      const personalTodos = (todosData || []).filter((t: any) => !t.activity_id && !t.quiz_id);
+      const pending = personalTodos.filter((t: any) => !t.is_done).length;
       const unread = (notifData || []).filter((n: any) => !n.is_read).length;
       setTodoPendingCount(pending);
       setNotifUnreadCount(unread);
