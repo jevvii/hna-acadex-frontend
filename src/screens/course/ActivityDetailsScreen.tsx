@@ -13,16 +13,19 @@ import {
   Platform,
   Alert,
   ActivityIndicator,
+  TextInput,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '@/contexts/ThemeContext';
-import { Activity, ActivityStatus } from '@/types';
+import { Activity, ActivityStatus, ActivityComment } from '@/types';
 import { Colors, Spacing, Radius, Shadows } from '@/constants/colors';
 import { CircularScore } from '@/components/shared/CircularScore';
 import { ReminderPickerDialog, ReminderValue } from '@/components/shared/ReminderPickerDialog';
 import { useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
 import { formatDate } from './utils';
 import { reminderApi, Reminder, formatOffsetLabel } from '@/services/reminders';
+import { activityCommentsApi } from '@/services/activityComments';
 
 // Submission type icons - using valid Ionicons names
 const submissionTypes = [
@@ -69,6 +72,13 @@ export function ActivityDetailsScreen({
   const [remindersLoading, setRemindersLoading] = useState(false);
   const [reminderPickerVisible, setReminderPickerVisible] = useState(false);
 
+  // Comments state
+  const [comments, setComments] = useState<ActivityComment[]>([]);
+  const [commentsLoading, setCommentsLoading] = useState(false);
+  const [commentText, setCommentText] = useState('');
+  const [submittingComment, setSubmittingComment] = useState(false);
+  const [replyingTo, setReplyingTo] = useState<ActivityComment | null>(null);
+
   // Fetch reminders for this activity
   const fetchReminders = useCallback(async () => {
     if (!activity?.id) return;
@@ -84,9 +94,25 @@ export function ActivityDetailsScreen({
     }
   }, [activity?.id]);
 
+  // Fetch comments for this activity
+  const fetchComments = useCallback(async () => {
+    if (!activity?.id) return;
+
+    setCommentsLoading(true);
+    try {
+      const activityComments = await activityCommentsApi.getByActivity(activity.id);
+      setComments(activityComments);
+    } catch (error) {
+      console.error('Failed to fetch comments:', error);
+    } finally {
+      setCommentsLoading(false);
+    }
+  }, [activity?.id]);
+
   useEffect(() => {
     fetchReminders();
-  }, [fetchReminders]);
+    fetchComments();
+  }, [fetchReminders, fetchComments]);
 
   // Derive status from submission data
   const status = useMemo(() => {
@@ -134,6 +160,76 @@ export function ActivityDetailsScreen({
       console.error('Failed to delete reminder:', error);
       Alert.alert('Error', 'Failed to remove reminder. Please try again.');
     }
+  }, []);
+
+  // Comment handlers
+  const handleSubmitComment = useCallback(async () => {
+    if (!activity?.id || !commentText.trim() || submittingComment) return;
+
+    setSubmittingComment(true);
+    try {
+      const comment = await activityCommentsApi.create({
+        activity_id: activity.id,
+        content: commentText.trim(),
+        parent_id: replyingTo?.id,
+      });
+
+      if (comment) {
+        setComments((prev) => {
+          if (replyingTo) {
+            // Add reply to the parent comment
+            return prev.map((c) => {
+              if (c.id === replyingTo.id) {
+                return { ...c, replies: [...(c.replies || []), comment] };
+              }
+              return c;
+            });
+          }
+          return [...prev, comment];
+        });
+        setCommentText('');
+        setReplyingTo(null);
+      }
+    } catch (error) {
+      console.error('Failed to create comment:', error);
+      Alert.alert('Error', 'Failed to post comment. Please try again.');
+    } finally {
+      setSubmittingComment(false);
+    }
+  }, [activity?.id, commentText, submittingComment, replyingTo]);
+
+  const handleDeleteComment = useCallback(async (commentId: string) => {
+    Alert.alert(
+      'Delete Comment',
+      'Are you sure you want to delete this comment?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const success = await activityCommentsApi.delete(commentId);
+              if (success) {
+                setComments((prev) => prev.filter((c) => c.id !== commentId));
+              }
+            } catch (error) {
+              console.error('Failed to delete comment:', error);
+              Alert.alert('Error', 'Failed to delete comment. Please try again.');
+            }
+          },
+        },
+      ]
+    );
+  }, []);
+
+  const startReply = useCallback((comment: ActivityComment) => {
+    setReplyingTo(comment);
+  }, []);
+
+  const cancelReply = useCallback(() => {
+    setReplyingTo(null);
+    setCommentText('');
   }, []);
 
   const formatReminderLabel = useCallback((reminder: Reminder) => {
@@ -343,6 +439,117 @@ export function ActivityDetailsScreen({
     );
   };
 
+  const renderCommentItem = (comment: ActivityComment, isReply = false) => (
+    <View
+      key={comment.id}
+      style={[styles.commentItem, isReply && styles.commentReply, { backgroundColor: colors.surface, borderColor: colors.border }]}
+    >
+      <View style={styles.commentHeader}>
+        <View style={styles.commentAuthor}>
+          <View style={[styles.commentAvatar, { backgroundColor: Colors.primary + '20' }]}>
+            <Text style={[styles.commentAvatarText, { color: Colors.primary }]}>
+              {comment.author_name?.charAt(0)?.toUpperCase() || '?'}
+            </Text>
+          </View>
+          <View style={styles.commentAuthorInfo}>
+            <Text style={[styles.commentAuthorName, { color: colors.textPrimary }]}>
+              {comment.author_name}
+            </Text>
+            <Text style={[styles.commentDate, { color: colors.textSecondary }]}>
+              {formatDate(comment.created_at)}
+            </Text>
+          </View>
+        </View>
+      </View>
+      {comment.content && (
+        <Text style={[styles.commentContent, { color: colors.textPrimary }]}>
+          {comment.content}
+        </Text>
+      )}
+      {comment.file_urls && comment.file_urls.length > 0 && (
+        <View style={styles.commentFiles}>
+          {comment.file_urls.map((url, idx) => (
+            <TouchableOpacity key={idx} style={styles.commentFileLink}>
+              <Ionicons name="document-outline" size={16} color={Colors.primary} />
+              <Text style={styles.commentFileText}>{url.split('/').pop()}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
+      {!isReply && (
+        <TouchableOpacity style={styles.replyButton} onPress={() => startReply(comment)}>
+          <Ionicons name="chatbubble-outline" size={14} color={Colors.primary} />
+          <Text style={styles.replyButtonText}>Reply</Text>
+        </TouchableOpacity>
+      )}
+      {/* Render replies */}
+      {comment.replies && comment.replies.length > 0 && (
+        <View style={styles.repliesContainer}>
+          {comment.replies.map((reply) => renderCommentItem(reply, true))}
+        </View>
+      )}
+    </View>
+  );
+
+  const renderComments = () => (
+    <View style={[styles.commentsSection, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+      <View style={styles.commentsHeader}>
+        <Text style={[styles.commentsTitle, { color: colors.textPrimary }]}>Comments</Text>
+        <Text style={[styles.commentsCount, { color: colors.textSecondary }]}>
+          {comments.length}
+        </Text>
+      </View>
+
+      {commentsLoading ? (
+        <ActivityIndicator size="small" color={Colors.primary} style={styles.commentsLoading} />
+      ) : comments.length === 0 ? (
+        <Text style={[styles.noCommentsText, { color: colors.textSecondary }]}>
+          No comments yet. Be the first to comment!
+        </Text>
+      ) : (
+        <View style={styles.commentsList}>
+          {comments.map((comment) => renderCommentItem(comment))}
+        </View>
+      )}
+
+      {/* Reply indicator */}
+      {replyingTo && (
+        <View style={[styles.replyIndicator, { backgroundColor: colors.background, borderColor: colors.border }]}>
+          <Text style={[styles.replyingToText, { color: colors.textSecondary }]}>
+            Replying to {replyingTo.author_name}
+          </Text>
+          <TouchableOpacity onPress={cancelReply}>
+            <Ionicons name="close-circle" size={20} color={colors.textSecondary} />
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Comment input */}
+      <View style={[styles.commentInputContainer, { backgroundColor: colors.background, borderColor: colors.border }]}>
+        <TextInput
+          style={[styles.commentInput, { color: colors.textPrimary, backgroundColor: colors.surface }]}
+          placeholder={replyingTo ? "Write a reply..." : "Write a comment..."}
+          placeholderTextColor={colors.textSecondary}
+          value={commentText}
+          onChangeText={setCommentText}
+          multiline
+          maxLength={2000}
+        />
+        <TouchableOpacity
+          style={[styles.submitCommentButton, { backgroundColor: commentText.trim() ? Colors.primary : colors.muted }]}
+          onPress={handleSubmitComment}
+          disabled={!commentText.trim() || submittingComment}
+        >
+          {submittingComment ? (
+            <ActivityIndicator size="small" color="#FFFFFF" />
+          ) : (
+            <Ionicons name="send" size={20} color="#FFFFFF" />
+          )}
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+
   if (!activity) {
     return (
       <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
@@ -510,6 +717,9 @@ export function ActivityDetailsScreen({
             </View>
           )}
         </View>
+
+        {/* Comments Section */}
+        {renderComments()}
 
         {/* Bottom padding for fixed button */}
         <View style={{ height: 100 }} />
@@ -843,6 +1053,152 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
     color: '#FFFFFF',
+  },
+  // Comments Section Styles
+  commentsSection: {
+    borderRadius: Radius.lg,
+    padding: Spacing.lg,
+    marginTop: Spacing.md,
+    borderWidth: 1,
+    ...Shadows.card,
+  },
+  commentsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: Spacing.md,
+  },
+  commentsTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  commentsCount: {
+    fontSize: 14,
+  },
+  commentsLoading: {
+    marginVertical: Spacing.lg,
+  },
+  noCommentsText: {
+    fontSize: 14,
+    textAlign: 'center',
+    paddingVertical: Spacing.lg,
+  },
+  commentsList: {
+    gap: Spacing.md,
+  },
+  commentItem: {
+    padding: Spacing.md,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+  },
+  commentReply: {
+    marginLeft: Spacing.xl,
+    marginTop: Spacing.sm,
+  },
+  commentHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: Spacing.sm,
+  },
+  commentAuthor: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+  },
+  commentAvatar: {
+    width: 32,
+    height: 32,
+    borderRadius: Radius.full,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  commentAvatarText: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  commentAuthorInfo: {
+    gap: 2,
+  },
+  commentAuthorName: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  commentDate: {
+    fontSize: 12,
+  },
+  commentContent: {
+    fontSize: 14,
+    lineHeight: 20,
+    marginTop: Spacing.xs,
+  },
+  commentFiles: {
+    marginTop: Spacing.sm,
+    gap: Spacing.xs,
+  },
+  commentFileLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+    paddingVertical: Spacing.xs,
+  },
+  commentFileText: {
+    fontSize: 12,
+    color: Colors.primary,
+    flex: 1,
+  },
+  replyButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+    marginTop: Spacing.sm,
+    paddingVertical: Spacing.xs,
+  },
+  replyButtonText: {
+    fontSize: 12,
+    color: Colors.primary,
+    fontWeight: '500',
+  },
+  repliesContainer: {
+    marginTop: Spacing.sm,
+    gap: Spacing.sm,
+  },
+  replyIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.md,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    marginBottom: Spacing.sm,
+  },
+  replyingToText: {
+    fontSize: 12,
+  },
+  commentInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    marginTop: Spacing.md,
+    padding: Spacing.sm,
+    gap: Spacing.sm,
+  },
+  commentInput: {
+    flex: 1,
+    fontSize: 14,
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.md,
+    borderRadius: Radius.md,
+    maxHeight: 100,
+  },
+  submitCommentButton: {
+    borderRadius: Radius.md,
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.md,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });
 

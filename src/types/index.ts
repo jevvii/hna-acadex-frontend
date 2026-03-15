@@ -372,3 +372,18 @@ export interface StudentUploadedFile {
   file_size_bytes?: number;
   uploaded_at: string;
 }
+
+export interface ActivityComment {
+  id: string;
+  activity_id: string;
+  submission_id?: string;
+  author_id: string;
+  author_name: string;
+  author_avatar?: string;
+  parent_id?: string;
+  content?: string;
+  file_urls?: string[];
+  created_at: string;
+  updated_at: string;
+  replies?: ActivityComment[];
+}

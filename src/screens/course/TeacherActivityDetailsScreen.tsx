@@ -15,11 +15,12 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '@/contexts/ThemeContext';
-import { Activity, Submission, ScoreSelectionPolicy } from '@/types';
+import { Activity, Submission, ScoreSelectionPolicy, ActivityComment } from '@/types';
 import { Colors, Spacing, Radius, Shadows } from '@/constants/colors';
 import { api } from '@/lib/api';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { FormattedText } from '@/components/shared/FormattedText';
+import { activityCommentsApi } from '@/services/activityComments';
 
 interface SubmissionWithStudent extends Submission {
   student_name?: string;
@@ -58,6 +59,8 @@ export function TeacherActivityDetailsScreen({
   const params = useLocalSearchParams<{ activityId?: string; courseId?: string }>();
   const [activity, setActivity] = useState<Activity | null>(propActivity || null);
   const [submissions, setSubmissions] = useState<SubmissionWithStudent[]>([]);
+  const [comments, setComments] = useState<ActivityComment[]>([]);
+  const [commentsLoading, setCommentsLoading] = useState(false);
   const [loading, setLoading] = useState(!propActivity);
   const [refreshing, setRefreshing] = useState(false);
   const [expandedStudentId, setExpandedStudentId] = useState<string | null>(null);
@@ -67,12 +70,14 @@ export function TeacherActivityDetailsScreen({
   const fetchData = useCallback(async () => {
     if (!activityId) return;
     try {
-      const [activityData, submissionsData] = await Promise.all([
+      const [activityData, submissionsData, commentsData] = await Promise.all([
         api.get(`/activities/${activityId}/`),
         api.get(`/activities/${activityId}/submissions/`),
+        activityCommentsApi.getByActivity(activityId),
       ]);
       setActivity(activityData);
       setSubmissions(submissionsData || []);
+      setComments(commentsData || []);
     } catch (error) {
       console.error('Failed to fetch activity data:', error);
       Alert.alert('Error', 'Failed to load activity details.');
@@ -367,6 +372,88 @@ export function TeacherActivityDetailsScreen({
             })
           )}
         </View>
+
+        {/* Comments Section */}
+        <View style={[styles.card, { backgroundColor: colors.surface }]}>
+          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Comments</Text>
+          {commentsLoading ? (
+            <ActivityIndicator size="small" color={Colors.primary} />
+          ) : comments.length === 0 ? (
+            <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+              No comments on this activity yet.
+            </Text>
+          ) : (
+            <View style={styles.commentsList}>
+              {comments.map((comment) => (
+                <View key={comment.id} style={[styles.commentItem, { borderColor: colors.border }]}>
+                  <View style={styles.commentHeader}>
+                    <View style={styles.commentAuthor}>
+                      <View style={[styles.commentAvatar, { backgroundColor: Colors.primary + '20' }]}>
+                        <Text style={[styles.commentAvatarText, { color: Colors.primary }]}>
+                          {comment.author_name?.charAt(0)?.toUpperCase() || '?'}
+                        </Text>
+                      </View>
+                      <View style={styles.commentAuthorInfo}>
+                        <Text style={[styles.commentAuthorName, { color: colors.textPrimary }]}>
+                          {comment.author_name}
+                        </Text>
+                        <Text style={[styles.commentDate, { color: colors.textSecondary }]}>
+                          {formatDate(comment.created_at)}
+                        </Text>
+                      </View>
+                    </View>
+                  </View>
+                  {comment.content && (
+                    <Text style={[styles.commentContent, { color: colors.textPrimary }]}>
+                      {comment.content}
+                    </Text>
+                  )}
+                  {comment.file_urls && comment.file_urls.length > 0 && (
+                    <View style={styles.commentFiles}>
+                      {comment.file_urls.map((url, idx) => (
+                        <TouchableOpacity key={idx} style={styles.commentFileLink}>
+                          <Ionicons name="document-outline" size={16} color={Colors.primary} />
+                          <Text style={styles.commentFileText}>{url.split('/').pop()}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  )}
+                  {/* Render replies */}
+                  {comment.replies && comment.replies.length > 0 && (
+                    <View style={styles.repliesContainer}>
+                      {comment.replies.map((reply) => (
+                        <View key={reply.id} style={[styles.replyItem, { borderColor: colors.border }]}>
+                          <View style={styles.commentHeader}>
+                            <View style={styles.commentAuthor}>
+                              <View style={[styles.commentAvatar, { backgroundColor: Colors.primary + '20' }]}>
+                                <Text style={[styles.commentAvatarText, { color: Colors.primary }]}>
+                                  {reply.author_name?.charAt(0)?.toUpperCase() || '?'}
+                                </Text>
+                              </View>
+                              <View style={styles.commentAuthorInfo}>
+                                <Text style={[styles.commentAuthorName, { color: colors.textPrimary }]}>
+                                  {reply.author_name}
+                                </Text>
+                                <Text style={[styles.commentDate, { color: colors.textSecondary }]}>
+                                  {formatDate(reply.created_at)}
+                                </Text>
+                              </View>
+                            </View>
+                          </View>
+                          {reply.content && (
+                            <Text style={[styles.commentContent, { color: colors.textPrimary }]}>
+                              {reply.content}
+                            </Text>
+                          )}
+                        </View>
+                      ))}
+                    </View>
+                  )}
+                </View>
+              ))}
+            </View>
+          )}
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -571,5 +658,110 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontWeight: '600',
     fontSize: 14,
+  },
+  // Comments styles
+  commentsList: {
+    gap: Spacing.md,
+  },
+  commentItem: {
+    padding: Spacing.md,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+  },
+  commentHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: Spacing.xs,
+  },
+  commentAvatar: {
+    width: 32,
+    height: 32,
+    borderRadius: Radius.full,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: Spacing.sm,
+  },
+  commentAvatarText: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  commentAuthorInfo: {
+    flex: 1,
+  },
+  commentAuthorName: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  commentDate: {
+    fontSize: 11,
+    marginTop: 2,
+  },
+  commentContent: {
+    fontSize: 14,
+    lineHeight: 20,
+    marginTop: Spacing.xs,
+  },
+  commentFiles: {
+    marginTop: Spacing.sm,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.sm,
+  },
+  commentFileLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    backgroundColor: '#F1F5F9',
+    borderRadius: Radius.sm,
+  },
+  commentFileText: {
+    fontSize: 12,
+    color: Colors.primary,
+    maxWidth: 150,
+  },
+  repliesContainer: {
+    marginTop: Spacing.sm,
+    marginLeft: Spacing.md,
+    gap: Spacing.sm,
+  },
+  replyItem: {
+    padding: Spacing.sm,
+    borderRadius: Radius.sm,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  replyHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  replyAvatar: {
+    width: 24,
+    height: 24,
+    borderRadius: Radius.full,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: Spacing.xs,
+  },
+  replyAvatarText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  replyAuthorInfo: {
+    flex: 1,
+  },
+  replyAuthorName: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  replyDate: {
+    fontSize: 10,
+    marginTop: 1,
+  },
+  replyContent: {
+    fontSize: 13,
+    lineHeight: 18,
+    marginTop: 4,
   },
 });
