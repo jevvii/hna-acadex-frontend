@@ -23,6 +23,7 @@ import { RichTextInput } from '@/components/shared/RichTextInput';
 import { FormattedText } from '@/components/shared/FormattedText';
 import { ActivityDetailsScreen } from '@/screens/course/ActivityDetailsScreen';
 import { ActivitySubmissionScreen } from '@/screens/course/ActivitySubmissionScreen';
+import { GradeActivitiesScreen } from '@/screens/course/GradeActivitiesScreen';
 import { WeeklyModule, Activity, CourseFile, Announcement, Quiz, AttendanceStatus } from '@/types';
 import { Colors, Spacing, Radius, Shadows, Typography } from '@/constants/colors';
 import {
@@ -460,9 +461,7 @@ export function CourseScreen() {
 
   const [gradeModalVisible, setGradeModalVisible] = useState(false);
   const [gradingItems, setGradingItems] = useState<any[]>([]);
-  const [gradingLoading, setGradingLoading] = useState(false);
   const [selectedGradeActivity, setSelectedGradeActivity] = useState<Activity | null>(null);
-  const [expandedGradeItemKey, setExpandedGradeItemKey] = useState<string | null>(null);
 
   const [quizGradingModalVisible, setQuizGradingModalVisible] = useState(false);
   const [quizGradingItems, setQuizGradingItems] = useState<any[]>([]);
@@ -1513,7 +1512,6 @@ export function CourseScreen() {
 
   const openActivityGrading = async (activity: Activity) => {
     setSelectedGradeActivity(activity);
-    setGradingLoading(true);
     try {
       const data = await api.get(`/activities/${activity.id}/submissions/`);
       const mapped = (data || []).map((d: any, idx: number) => ({
@@ -1523,25 +1521,9 @@ export function CourseScreen() {
         _rowKey: d.id || d.student_id || `row-${idx}`,
       }));
       setGradingItems(mapped);
-      setExpandedGradeItemKey(mapped[0]?._rowKey || null);
       setGradeModalVisible(true);
     } catch (e: any) {
       Alert.alert('Error', e.message || 'Could not load submissions.');
-    } finally {
-      setGradingLoading(false);
-    }
-  };
-
-  const saveSubmissionGrade = async (item: any) => {
-    try {
-      await api.patch(`/activity-submissions/${item.id}/grade/`, {
-        score: item._score === '' ? null : Number(item._score),
-        feedback: item._feedback || null,
-      });
-      if (selectedGradeActivity) await openActivityGrading(selectedGradeActivity);
-      await fetchData();
-    } catch (e: any) {
-      Alert.alert('Error', e.message || 'Could not save grade.');
     }
   };
 
@@ -3042,103 +3024,19 @@ export function CourseScreen() {
         </View>
       </Modal>
 
+      {/* Grade Activities Screen */}
       <Modal visible={gradeModalVisible} animationType="slide" onRequestClose={() => setGradeModalVisible(false)}>
-        <View style={[styles.modalWrap, { backgroundColor: colors.background }]}>
-          <View style={[styles.modalHeader, { borderBottomColor: colors.border, backgroundColor: colors.surface }]}>
-            <TouchableOpacity onPress={() => setGradeModalVisible(false)}><Text style={[styles.modalCancel, { color: colors.textSecondary }]}>Close</Text></TouchableOpacity>
-            <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Grade Activities</Text>
-            <View style={{ width: 48 }} />
-          </View>
-          <ScrollView contentContainerStyle={styles.modalBody}>
-            {gradingLoading ? <ActivityIndicator color={Colors.primary} /> : gradingItems.map((s, i) => {
-              const rowKey = s._rowKey || s.id || s.student_id || `row-${i}`;
-              const expanded = expandedGradeItemKey === rowKey;
-              return (
-                <View key={rowKey} style={styles.gradeCard}>
-                  <TouchableOpacity
-                    style={styles.gradeAccordionHeader}
-                    onPress={() => setExpandedGradeItemKey((prev) => (prev === rowKey ? null : rowKey))}
-                    activeOpacity={0.85}
-                  >
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.gradeStudent}>{s.student_name || `Student ${i + 1}`}</Text>
-                      <Text style={styles.gradeAccordionMeta}>
-                        Status: {s.status || 'not_submitted'} {s.score != null ? `• Score: ${s.score}` : ''}
-                      </Text>
-                    </View>
-                    <Ionicons
-                      name={expanded ? 'chevron-up' : 'chevron-down'}
-                      size={18}
-                      color="#334155"
-                    />
-                  </TouchableOpacity>
-
-                  {expanded && (
-                    <View style={styles.gradeAccordionBody}>
-                      {!!s.text_content && <Text style={styles.previewValue}>Text: {s.text_content}</Text>}
-                      {!!(s.file_urls || []).length && (
-                        <View style={{ marginBottom: 8 }}>
-                          <Text style={styles.previewLabel}>Files:</Text>
-                          {(s.file_urls || []).map((url: string, idx: number) => {
-                            const resolvedUrl = resolveBackendFileUrl(url);
-                            const fileName = fileNameFromUrl(resolvedUrl);
-                            const ext = (fileName.split('.').pop() || '').toLowerCase();
-                            const iconName = FILE_ICONS[ext] || 'document-outline';
-                            const imageFile = isImageFile(fileName);
-                            return (
-                              <View key={`${rowKey}-file-${idx}`} style={styles.teacherPreviewCard}>
-                                {imageFile ? (
-                                  <TouchableOpacity style={styles.fullPreviewWrap} onPress={() => setPreviewImageUri(resolvedUrl)} activeOpacity={0.9}>
-                                    <Image
-                                      source={{ uri: resolvedUrl }}
-                                      style={styles.teacherPreviewImage}
-                                      contentFit="contain"
-                                      transition={120}
-                                    />
-                                  </TouchableOpacity>
-                                ) : (
-                                  <TouchableOpacity style={styles.fullPreviewWrap} onPress={() => Linking.openURL(resolvedUrl)} activeOpacity={0.85}>
-                                    <View style={styles.uploadedDocPreview}>
-                                      <Ionicons name={iconName as any} size={34} color="#007ACC" />
-                                      <Text style={styles.uploadedDocPreviewTitle}>{ext.toUpperCase() || 'FILE'} Preview</Text>
-                                      <Text style={styles.uploadedDocPreviewHint}>Tap to open full document</Text>
-                                    </View>
-                                  </TouchableOpacity>
-                                )}
-                                <TouchableOpacity onPress={() => Linking.openURL(resolvedUrl)}>
-                                  <Text style={styles.fileLink} numberOfLines={1}>{fileName}</Text>
-                                </TouchableOpacity>
-                              </View>
-                            );
-                          })}
-                        </View>
-                      )}
-                      <Field
-                        label="Score"
-                        value={String(s._score ?? '')}
-                        keyboardType="numeric"
-                        onChangeText={(v) => setGradingItems((prev) => prev.map((x) => x._rowKey === rowKey ? { ...x, _score: v } : x))}
-                      />
-                      <Field
-                        label="Feedback"
-                        value={s._feedback || ''}
-                        multiline
-                        onChangeText={(v) => setGradingItems((prev) => prev.map((x) => x._rowKey === rowKey ? { ...x, _feedback: v } : x))}
-                      />
-                      {s.id ? (
-                        <TouchableOpacity style={styles.inlineBtn} onPress={() => saveSubmissionGrade(s)}>
-                          <Text style={styles.inlineBtnText}>Save Grade</Text>
-                        </TouchableOpacity>
-                      ) : (
-                        <Text style={styles.pendingPill}>No submission yet</Text>
-                      )}
-                    </View>
-                  )}
-                </View>
-              );
-            })}
-          </ScrollView>
-        </View>
+        {selectedGradeActivity && (
+          <GradeActivitiesScreen
+            activity={selectedGradeActivity}
+            submissions={gradingItems}
+            onClose={() => setGradeModalVisible(false)}
+            onGradeSaved={() => {
+              fetchData();
+              openActivityGrading(selectedGradeActivity);
+            }}
+          />
+        )}
       </Modal>
 
       <Modal visible={quizGradingModalVisible} animationType="slide" onRequestClose={() => setQuizGradingModalVisible(false)}>
