@@ -1,0 +1,1 @@
+export { GradebookTable } from './GradebookTable';

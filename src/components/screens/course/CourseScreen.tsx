@@ -25,7 +25,8 @@ import { ActivityDetailsScreen } from '@/screens/course/ActivityDetailsScreen';
 import { ActivitySubmissionScreen } from '@/screens/course/ActivitySubmissionScreen';
 import { GradeActivitiesScreen } from '@/screens/course/GradeActivitiesScreen';
 import { QuizDetailsScreen } from '@/screens/course/QuizDetailsScreen';
-import { WeeklyModule, Activity, CourseFile, Announcement, Quiz, AttendanceStatus } from '@/types';
+import { WeeklyModule, Activity, CourseFile, Announcement, Quiz, AttendanceStatus, GradebookData, GradebookStudent, GradebookItem, GradebookSummary } from '@/types';
+import { GradebookTable } from '@/components/gradebook';
 import { Colors, Spacing, Radius, Shadows, Typography } from '@/constants/colors';
 import {
   RollCallHeader,
@@ -405,6 +406,12 @@ export function CourseScreen() {
   const [exportingGrades, setExportingGrades] = useState(false);
   const [gradeExportStatus, setGradeExportStatus] = useState<'idle' | 'exporting' | 'success' | 'error'>('idle');
   const [gradeExportAt, setGradeExportAt] = useState<string | null>(null);
+  const [gradebookData, setGradebookData] = useState<GradebookData | null>(null);
+  const [gradebookLoading, setGradebookLoading] = useState(false);
+  const [gradebookView, setGradebookView] = useState<'table' | 'export'>('table');
+  const [exportFormat, setExportFormat] = useState<'csv' | 'xlsx'>('csv');
+  const [exportScope, setExportScope] = useState<'all' | 'activities' | 'quizzes' | 'final_only'>('all');
+  const [exportOptions, setExportOptions] = useState({ includeInactive: false, includeStudentId: false, includeEnrolledAt: false });
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -529,6 +536,19 @@ export function CourseScreen() {
     }
   }, [id, canManage, selectedAttendanceSessionId]);
 
+  const fetchGradebookData = useCallback(async () => {
+    if (!id || !canManage) return;
+    setGradebookLoading(true);
+    try {
+      const data = await api.get(`/course-sections/${id}/gradebook/`);
+      setGradebookData(data);
+    } catch (e: any) {
+      console.error('Failed to fetch gradebook:', e);
+    } finally {
+      setGradebookLoading(false);
+    }
+  }, [id, canManage]);
+
   useEffect(() => {
     if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
       UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -564,7 +584,10 @@ export function CourseScreen() {
   useEffect(() => {
     fetchData();
     fetchAttendanceData();
-  }, [fetchData, fetchAttendanceData]);
+    if (canManage) {
+      fetchGradebookData();
+    }
+  }, [fetchData, fetchAttendanceData, canManage, fetchGradebookData]);
   useEffect(() => {
     if (!tab) return;
     if (['modules', 'assignments', 'files', 'announcements', 'quizzes', 'attendance', 'grades'].includes(tab)) {
@@ -629,6 +652,9 @@ export function CourseScreen() {
     setRefreshing(true);
     fetchData();
     fetchAttendanceData();
+    if (canManage) {
+      fetchGradebookData();
+    }
   };
 
   const exportGradesCsv = () => {
@@ -2562,31 +2588,208 @@ export function CourseScreen() {
           )}
 
           {activeTab === 'grades' && canManage && (
-            <View style={styles.gradesExportCard}>
-              <View style={styles.gradesExportHeader}>
-                <Ionicons name="download-outline" size={20} color={Colors.primary} />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.gradesExportTitle}>Export Section Grades</Text>
-                  <Text style={styles.gradesExportMeta}>Downloads all enrolled students with assignment and quiz grades.</Text>
+            <View style={{ flex: 1 }}>
+              {/* Tab Toggle */}
+              <View style={styles.gradesTabContainer}>
+                <TouchableOpacity
+                  style={[styles.gradesTabBtn, gradebookView === 'table' && styles.gradesTabBtnActive]}
+                  onPress={() => setGradebookView('table')}
+                >
+                  <Ionicons name="grid-outline" size={16} color={gradebookView === 'table' ? Colors.primary : colors.textSecondary} />
+                  <Text style={[styles.gradesTabText, { color: gradebookView === 'table' ? Colors.primary : colors.textSecondary }]}>
+                    Gradebook
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.gradesTabBtn, gradebookView === 'export' && styles.gradesTabBtnActive]}
+                  onPress={() => setGradebookView('export')}
+                >
+                  <Ionicons name="download-outline" size={16} color={gradebookView === 'export' ? Colors.primary : colors.textSecondary} />
+                  <Text style={[styles.gradesTabText, { color: gradebookView === 'export' ? Colors.primary : colors.textSecondary }]}>
+                    Export
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              {gradebookView === 'table' ? (
+                <>
+                  {gradebookLoading ? (
+                    <View style={styles.gradebookLoadingContainer}>
+                      <ActivityIndicator size="large" color={Colors.primary} />
+                      <Text style={[styles.gradebookLoadingText, { color: colors.textSecondary }]}>
+                        Loading gradebook...
+                      </Text>
+                    </View>
+                  ) : gradebookData ? (
+                    <GradebookTable
+                      students={gradebookData.students}
+                      inactiveStudents={gradebookData.inactive_students}
+                      items={gradebookData.items}
+                      summary={gradebookData.summary}
+                      loading={gradebookLoading}
+                      onRefresh={fetchGradebookData}
+                      sectionId={id || ''}
+                    />
+                  ) : (
+                    <View style={styles.gradebookEmptyContainer}>
+                      <Ionicons name="document-text-outline" size={48} color={colors.textSecondary} />
+                      <Text style={[styles.gradebookEmptyText, { color: colors.textSecondary }]}>
+                        No grade data available
+                      </Text>
+                    </View>
+                  )}
+                </>
+              ) : (
+                <View style={styles.gradesExportCard}>
+                  <View style={styles.gradesExportHeader}>
+                    <Ionicons name="download-outline" size={20} color={Colors.primary} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.gradesExportTitle}>Export Section Grades</Text>
+                      <Text style={styles.gradesExportMeta}>Download grades in CSV or Excel format.</Text>
+                    </View>
+                  </View>
+
+                  {/* Export Format */}
+                  <View style={styles.exportOptionRow}>
+                    <Text style={[styles.exportOptionLabel, { color: colors.textPrimary }]}>Format:</Text>
+                    <View style={styles.exportOptionButtons}>
+                      <TouchableOpacity
+                        style={[styles.exportOptionBtn, exportFormat === 'csv' && styles.exportOptionBtnActive]}
+                        onPress={() => setExportFormat('csv')}
+                      >
+                        <Text style={[styles.exportOptionText, { color: exportFormat === 'csv' ? '#FFFFFF' : colors.textSecondary }]}>
+                          CSV
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.exportOptionBtn, exportFormat === 'xlsx' && styles.exportOptionBtnActive]}
+                        onPress={() => setExportFormat('xlsx')}
+                      >
+                        <Text style={[styles.exportOptionText, { color: exportFormat === 'xlsx' ? '#FFFFFF' : colors.textSecondary }]}>
+                          Excel
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+
+                  {/* Export Scope */}
+                  <View style={styles.exportOptionRow}>
+                    <Text style={[styles.exportOptionLabel, { color: colors.textPrimary }]}>Scope:</Text>
+                    <View style={styles.exportOptionButtons}>
+                      {(['all', 'activities', 'quizzes', 'final_only'] as const).map((scope) => (
+                        <TouchableOpacity
+                          key={scope}
+                          style={[styles.exportOptionBtn, exportScope === scope && styles.exportOptionBtnActive]}
+                          onPress={() => setExportScope(scope)}
+                        >
+                          <Text style={[styles.exportOptionText, { color: exportScope === scope ? '#FFFFFF' : colors.textSecondary }]}>
+                            {scope === 'all' ? 'All' : scope === 'activities' ? 'Activities' : scope === 'quizzes' ? 'Quizzes' : 'Final Only'}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  </View>
+
+                  {/* Include Inactive Toggle */}
+                  <TouchableOpacity
+                    style={styles.exportCheckboxRow}
+                    onPress={() => setExportOptions((prev) => ({ ...prev, includeInactive: !prev.includeInactive }))}
+                  >
+                    <View style={[styles.checkbox, exportOptions.includeInactive && styles.checkboxChecked]}>
+                      {exportOptions.includeInactive && <Ionicons name="checkmark" size={14} color="#FFFFFF" />}
+                    </View>
+                    <Text style={[styles.checkboxLabel, { color: colors.textPrimary }]}>
+                      Include inactive/dropped students
+                    </Text>
+                  </TouchableOpacity>
+
+                  <View style={[styles.gradesExportStatusBadge, { backgroundColor: gradeExportStatusUi.bg }]}>
+                    <Text style={[styles.gradesExportStatusText, { color: gradeExportStatusUi.fg }]}>{gradeExportStatusUi.text}</Text>
+                  </View>
+
+                  <TouchableOpacity
+                    style={[styles.gradesExportBtn, exportingGrades && { opacity: 0.7 }]}
+                    onPress={() => {
+                      if (!id) return;
+                      const params = new URLSearchParams({
+                        format: exportFormat,
+                        scope: exportScope,
+                        include_inactive: String(exportOptions.includeInactive),
+                      });
+                      const url = `/course-sections/${id}/grades/export/?${params.toString()}`;
+                      Alert.alert(
+                        `Export ${exportFormat.toUpperCase()}`,
+                        `Download grades as ${exportFormat.toUpperCase()}?`,
+                        [
+                          { text: 'Cancel', style: 'cancel' },
+                          {
+                            text: 'Download',
+                            onPress: async () => {
+                              setExportingGrades(true);
+                              setGradeExportStatus('exporting');
+                              try {
+                                const data = await api.getRaw(url);
+                                const ext = exportFormat === 'xlsx' ? 'xlsx' : 'csv';
+                                const fallback = `course_section_${id}_grades.${ext}`;
+                                const filename = parseFilenameFromContentDisposition(data.headers.get('content-disposition')) || fallback;
+                                if (Platform.OS === 'web') {
+                                  const doc = (globalThis as any).document as Document;
+                                  const mimeType = exportFormat === 'xlsx'
+                                    ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                                    : 'text/csv;charset=utf-8;';
+                                  const blob = new Blob([data.text], { type: mimeType });
+                                  const url = URL.createObjectURL(blob);
+                                  const anchor = doc.createElement('a');
+                                  anchor.href = url;
+                                  anchor.setAttribute('download', filename);
+                                  doc.body.appendChild(anchor);
+                                  anchor.click();
+                                  doc.body.removeChild(anchor);
+                                  URL.revokeObjectURL(url);
+                                  setGradeExportStatus('success');
+                                  setGradeExportAt(new Date().toISOString());
+                                  return;
+                                }
+                                const directory = FileSystem.documentDirectory || FileSystem.cacheDirectory;
+                                if (!directory) throw new Error('No writable directory available.');
+                                const target = `${directory}${filename}`;
+                                await FileSystem.writeAsStringAsync(target, data.text, { encoding: FileSystem.EncodingType.UTF8 });
+                                try {
+                                  if (Platform.OS === 'android') {
+                                    const contentUri = await FileSystem.getContentUriAsync(target);
+                                    await Linking.openURL(contentUri);
+                                  } else {
+                                    await Linking.openURL(target);
+                                  }
+                                } catch {
+                                  Alert.alert('Exported', `File saved to:\n${target}`);
+                                }
+                                setGradeExportStatus('success');
+                                setGradeExportAt(new Date().toISOString());
+                              } catch (e: any) {
+                                setGradeExportStatus('error');
+                                Alert.alert('Error', e.message || 'Could not export grades.');
+                              } finally {
+                                setExportingGrades(false);
+                              }
+                            },
+                          },
+                        ]
+                      );
+                    }}
+                    disabled={exportingGrades}
+                  >
+                    {exportingGrades ? (
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                    ) : (
+                      <>
+                        <Ionicons name="cloud-download-outline" size={16} color="#FFFFFF" />
+                        <Text style={styles.gradesExportBtnText}>Export {exportFormat.toUpperCase()}</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
                 </View>
-              </View>
-              <View style={[styles.gradesExportStatusBadge, { backgroundColor: gradeExportStatusUi.bg }]}>
-                <Text style={[styles.gradesExportStatusText, { color: gradeExportStatusUi.fg }]}>{gradeExportStatusUi.text}</Text>
-              </View>
-              <TouchableOpacity
-                style={[styles.gradesExportBtn, exportingGrades && { opacity: 0.7 }]}
-                onPress={exportGradesCsv}
-                disabled={exportingGrades}
-              >
-                {exportingGrades ? (
-                  <ActivityIndicator size="small" color="#FFFFFF" />
-                ) : (
-                  <>
-                    <Ionicons name="cloud-download-outline" size={16} color="#FFFFFF" />
-                    <Text style={styles.gradesExportBtnText}>Export CSV</Text>
-                  </>
-                )}
-              </TouchableOpacity>
+              )}
             </View>
           )}
 
@@ -3744,6 +3947,105 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   gradesExportBtnText: { color: '#FFFFFF', fontSize: 13, fontWeight: '700' },
+  gradesTabContainer: {
+    flexDirection: 'row',
+    gap: Spacing.sm,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+  },
+  gradesTabBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  gradesTabBtnActive: {
+    backgroundColor: Colors.primary,
+    borderColor: Colors.primary,
+  },
+  gradesTabText: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  gradebookLoadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: Spacing.xxxl,
+  },
+  gradebookLoadingText: {
+    marginTop: Spacing.md,
+    fontSize: 14,
+  },
+  gradebookEmptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: Spacing.xxxl,
+    gap: Spacing.md,
+  },
+  gradebookEmptyText: {
+    fontSize: 14,
+  },
+  exportOptionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: Spacing.md,
+    gap: Spacing.sm,
+  },
+  exportOptionLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    minWidth: 70,
+  },
+  exportOptionButtons: {
+    flexDirection: 'row',
+    gap: Spacing.xs,
+    flexWrap: 'wrap',
+  },
+  exportOptionBtn: {
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  exportOptionBtnActive: {
+    backgroundColor: Colors.primary,
+    borderColor: Colors.primary,
+  },
+  exportOptionText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  exportCheckboxRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    marginTop: Spacing.md,
+  },
+  checkbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 4,
+    borderWidth: 2,
+    borderColor: '#D1D5DB',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  checkboxChecked: {
+    backgroundColor: Colors.primary,
+    borderColor: Colors.primary,
+  },
+  checkboxLabel: {
+    fontSize: 14,
+  },
   moduleCanvasCard: {
     borderWidth: 1,
     borderRadius: Radius.md,

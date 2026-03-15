@@ -390,3 +390,80 @@ export interface ActivityComment {
   updated_at: string;
   replies?: ActivityComment[];
 }
+
+// Gradebook types
+export interface GradebookActivityGrade {
+  activity_id: string;
+  title: string;
+  points: number;
+  deadline?: string;
+  score?: number;
+  status?: 'graded' | 'submitted' | 'late' | 'not_submitted';
+  is_late: boolean;
+  is_excused: boolean;
+  graded_at?: string;
+  is_na?: boolean; // Pre-enrollment exclusion
+}
+
+export interface GradebookQuizGrade {
+  quiz_id: string;
+  title: string;
+  max_score: number;
+  close_at?: string;
+  score?: number;
+  attempts: number;
+  max_attempts: number;
+  is_late: boolean;
+  is_na?: boolean; // Pre-enrollment exclusion
+  pending_grading?: boolean;
+}
+
+export interface GradebookStudent {
+  enrollment_id: string;
+  student_id: string;
+  student_name: string;
+  student_email: string;
+  student_avatar?: string;
+  enrolled_at?: string;
+  is_active: boolean;
+  grades: {
+    activities: GradebookActivityGrade[];
+    quizzes: GradebookQuizGrade[];
+  };
+  final_grade?: number;
+  final_grade_letter?: string;
+  grade_overridden: boolean;
+  manual_final_grade?: number;
+}
+
+export interface GradebookItem {
+  id: string;
+  title: string;
+  type: 'activity' | 'quiz';
+  max_points: number;
+  deadline?: string;
+  created_at: string;
+}
+
+export interface GradebookSummary {
+  activity_id?: string;
+  quiz_id?: string;
+  avg_score?: number;
+  high_score?: number;
+  low_score?: number;
+  missing_count: number;
+  needs_grading_count: number;
+}
+
+export interface GradebookData {
+  students: GradebookStudent[];
+  inactive_students: GradebookStudent[];
+  items: {
+    activities: GradebookItem[];
+    quizzes: GradebookItem[];
+  };
+  summary: {
+    activities: GradebookSummary[];
+    quizzes: GradebookSummary[];
+  };
+}
