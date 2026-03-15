@@ -2,12 +2,12 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
   RefreshControl, ActivityIndicator, Linking, Modal,
-  TextInput, Alert, KeyboardAvoidingView, Platform, Image as RNImage, LayoutAnimation, UIManager, useWindowDimensions,
+  TextInput, Alert, KeyboardAvoidingView, Platform, Image as RNImage, LayoutAnimation, UIManager, useWindowDimensions, AppState,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system';
@@ -369,6 +369,7 @@ export function CourseScreen() {
   const { user } = useAuth();
   const { colors } = useTheme();
   const router = useRouter();
+  const navigation = useNavigation();
   const { width: screenWidth } = useWindowDimensions();
   const compactMeta = screenWidth < 390;
   const isTeacher = user?.role === 'teacher';
@@ -475,6 +476,7 @@ export function CourseScreen() {
   const [selectedQuizForInfo, setSelectedQuizForInfo] = useState<Quiz | null>(null);
   const [quizInfoStats, setQuizInfoStats] = useState<any>(null);
   const visibleTabs = useMemo(() => TABS.filter((tab) => (tab.key === 'grades' ? canManage : true)), [canManage]);
+  const isAutoSubmittingRef = useRef(false);
   const lastHandledTargetRef = useRef<string | null>(null);
 
   const fetchData = useCallback(async () => {
@@ -1458,6 +1460,96 @@ export function CourseScreen() {
       setQuizSubmitting(false);
     }
   };
+
+  // Auto-submit quiz when user leaves (app background or navigation away)
+  const autoSubmitQuiz = useCallback(async () => {
+    // Cooldown guard: prevent double-submission
+    if (isAutoSubmittingRef.current) return;
+
+    // Check if quiz modal is visible and we have an active attempt
+    if (!quizModalVisible || !selectedQuiz || !currentQuizAttemptId) return;
+
+    // Check if already submitted or timer already expired
+    if (quizSubmitting) return;
+
+    // Check if no answers touched (quiz hasn't started meaningfully)
+    const hasAnyAnswer = Object.values(quizAnswers).some(
+      (a) => a.selected_choice_id || (a.text_answer && a.text_answer.trim())
+    );
+    if (!hasAnyAnswer) return;
+
+    // Mark as submitting to prevent duplicate submissions
+    isAutoSubmittingRef.current = true;
+    setQuizSubmitting(true);
+
+    try {
+      const answers = quizQuestions.map((q) => ({
+        question_id: q.id,
+        selected_choice_id: quizAnswers[q.id]?.selected_choice_id || null,
+        text_answer: quizAnswers[q.id]?.text_answer || '',
+      }));
+
+      await api.post(`/quizzes/${selectedQuiz.id}/submit-attempt/`, {
+        attempt_id: currentQuizAttemptId,
+        answers,
+      });
+
+      // Reset quiz state
+      setQuizModalVisible(false);
+      setSelectedQuiz(null);
+      setCurrentQuizAttemptId(null);
+      setQuizTimeRemaining(null);
+      setQuizQuestions([]);
+      setQuizAnswers({});
+
+      // Fetch result and show modal with auto-submitted message
+      await fetchData();
+      try {
+        const result = await api.get(`/quizzes/${selectedQuiz.id}/my-latest-attempt/`);
+        setQuizResult(result);
+      } catch {
+        setQuizResult({
+          attempt: { score: null, max_score: null, pending_manual_grading: false },
+          attempt_limit: selectedQuiz.attempt_limit,
+          attempts_remaining: 0,
+          attempt_stats: { graded_count: 0, average_score: null, lowest_score: null, highest_score: null },
+          attempts: [],
+        });
+      }
+      setQuizResultModalVisible(true);
+
+      // Show alert about auto-submission
+      Alert.alert('Quiz Auto-Submitted', 'Your quiz was automatically submitted because you left the app.');
+    } catch {
+      // Silent fail - don't show error to user since they're leaving
+    } finally {
+      setQuizSubmitting(false);
+    }
+  }, [quizModalVisible, selectedQuiz, currentQuizAttemptId, quizSubmitting, quizQuestions, quizAnswers, fetchData]);
+
+  // Auto-submit on app going to background/inactive (exit detector)
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextAppState) => {
+      if (nextAppState === 'background' || nextAppState === 'inactive') {
+        autoSubmitQuiz();
+      }
+    });
+    return () => subscription.remove();
+  }, [autoSubmitQuiz]);
+
+  // Auto-submit on navigation away (back button / swipe back)
+  useEffect(() => {
+    if (!quizModalVisible) return;
+
+    const beforeRemoveHandler = (e: any) => {
+      // Prevent default navigation, auto-submit, then allow navigation
+      e.preventDefault();
+      autoSubmitQuiz();
+    };
+
+    navigation.addListener('beforeRemove', beforeRemoveHandler);
+    return () => navigation.removeListener('beforeRemove', beforeRemoveHandler);
+  }, [navigation, quizModalVisible, autoSubmitQuiz]);
 
   const saveQuizProgress = async () => {
     if (!selectedQuiz || !currentQuizAttemptId) return;

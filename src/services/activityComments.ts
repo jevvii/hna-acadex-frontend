@@ -21,10 +21,20 @@ export interface UpdateCommentData {
 
 /**
  * Get all comments for a specific activity (including nested replies).
+ * Optionally filter by submission_id to get comments for a specific submission.
+ * @param activityId - The activity ID
+ * @param submissionId - Optional submission ID to filter comments for a specific submission
  */
-export async function getCommentsByActivity(activityId: string): Promise<ActivityComment[]> {
+export async function getCommentsByActivity(
+  activityId: string,
+  submissionId?: string
+): Promise<ActivityComment[]> {
   try {
-    const data = await api.get(`/activities/${activityId}/comments/`);
+    let url = `/activities/${activityId}/comments/`;
+    if (submissionId) {
+      url += `?submission_id=${submissionId}`;
+    }
+    const data = await api.get(url);
     return data as ActivityComment[];
   } catch (error) {
     console.error('Error fetching activity comments:', error);

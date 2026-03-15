@@ -271,15 +271,11 @@ export function GradeActivitiesScreen({
     ));
 
     try {
-      // Fetch all comments for the activity
-      const allComments = await activityCommentsApi.getByActivity(activity.id);
+      // Fetch comments for this specific submission from the server
+      // The server now filters by submission_id, ensuring accurate per-student conversations
+      const submissionComments = await activityCommentsApi.getByActivity(activity.id, submissionId);
 
-      // Filter comments to show ONLY those belonging to this specific submission
-      // This ensures one-to-one conversation between teacher and student for each submission
-      // Comments without a submission_id are activity-level comments and should not appear here
-      const submissionComments = allComments.filter(c => c.submission_id === submissionId);
-
-      console.log(`[GradeActivities] Submission ${submissionId}: ${submissionComments.length} comments (filtered from ${allComments.length} total)`);
+      console.log(`[GradeActivities] Submission ${submissionId}: ${submissionComments.length} comments`);
 
       setSubmissions(prev => prev.map(s =>
         s._rowKey === rowKey
@@ -628,16 +624,20 @@ export function GradeActivitiesScreen({
               <Text style={styles.sectionLabel}>Score</Text>
               <View style={styles.scoreRow}>
                 <TextInput
-                  style={styles.scoreInput}
+                  style={[styles.scoreInput, !hasSubmitted && styles.scoreInputDisabled]}
                   value={item._score}
                   onChangeText={(v) => updateScore(item._rowKey, v)}
                   keyboardType="numeric"
                   placeholder="—"
                   placeholderTextColor="#AAAAAA"
+                  editable={hasSubmitted}
                 />
                 <Text style={styles.scoreSeparator}>/</Text>
                 <Text style={styles.scoreMax}>{activity.points}</Text>
               </View>
+              {!hasSubmitted && (
+                <Text style={styles.disabledHint}>Cannot grade without submission</Text>
+              )}
 
               {/* Quick Grade Chips */}
               <View style={styles.quickGradeRow}>
@@ -647,8 +647,10 @@ export function GradeActivitiesScreen({
                     style={[
                       styles.quickGradeChip,
                       item._score === String(value) && styles.quickGradeChipActive,
+                      !hasSubmitted && styles.quickGradeChipDisabled,
                     ]}
-                    onPress={() => handleQuickGrade(item._rowKey, value)}
+                    onPress={() => hasSubmitted && handleQuickGrade(item._rowKey, value)}
+                    disabled={!hasSubmitted}
                   >
                     <Text
                       style={[
@@ -821,10 +823,10 @@ export function GradeActivitiesScreen({
               <TouchableOpacity
                 style={[
                   styles.saveButton,
-                  (item._score === '' || isSaving) && styles.saveButtonDisabled,
+                  (item._score === '' || isSaving || !hasSubmitted) && styles.saveButtonDisabled,
                 ]}
                 onPress={() => saveGrade(item)}
-                disabled={item._score === '' || isSaving}
+                disabled={item._score === '' || isSaving || !hasSubmitted}
               >
                 {isSaving ? (
                   <ActivityIndicator size="small" color="#FFFFFF" />
@@ -1050,6 +1052,16 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: Colors.primary,
   },
+  scoreInputDisabled: {
+    borderColor: '#CCCCCC',
+    color: '#AAAAAA',
+    backgroundColor: '#F5F5F5',
+  },
+  disabledHint: {
+    fontSize: 12,
+    color: '#999999',
+    marginTop: 4,
+  },
   scoreSeparator: {
     fontSize: 18,
     color: '#AAAAAA',
@@ -1083,6 +1095,10 @@ const styles = StyleSheet.create({
   },
   quickGradeChipTextActive: {
     color: '#FFFFFF',
+  },
+  quickGradeChipDisabled: {
+    borderColor: '#CCCCCC',
+    backgroundColor: '#F5F5F5',
   },
   sectionHeader: {
     flexDirection: 'row',
