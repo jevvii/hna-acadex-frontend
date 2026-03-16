@@ -29,7 +29,7 @@ export function SplashScreen() {
     <View style={styles.container}>
       <View style={styles.logoContainer}>
         <Image
-          source={require('@/assets/icon.png')}
+          source={require('../../../assets/icon.png')}
           style={styles.logoImage}
           resizeMode="contain"
         />
