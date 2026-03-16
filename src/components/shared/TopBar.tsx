@@ -26,7 +26,7 @@ export function TopBar({ title, onMenuClick, onNotificationsClick, unreadCount =
         {/* Left: Logo */}
         <View style={styles.left}>
           <Image
-            source={require('../../assets/icon.png')}
+            source={require('../../../assets/icon.png')}
             style={styles.logoImage}
             resizeMode="contain"
           />
