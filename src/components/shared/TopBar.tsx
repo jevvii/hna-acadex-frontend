@@ -25,9 +25,11 @@ export function TopBar({ title, onMenuClick, onNotificationsClick, unreadCount =
       <View style={styles.inner}>
         {/* Left: Logo */}
         <View style={styles.left}>
-          <View style={styles.logoBadge}>
-            <Text style={styles.logoBadgeText}>HNA</Text>
-          </View>
+          <Image
+            source={require('../../assets/icon.png')}
+            style={styles.logoImage}
+            resizeMode="contain"
+          />
           <Text style={[styles.logoText, { color: Colors.primary }]}>HNA Acadex</Text>
         </View>
 
@@ -79,21 +81,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: Spacing.sm,
   },
-  logoBadge: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: Colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1.5,
-    borderColor: Colors.accentGold,
-  },
-  logoBadgeText: {
-    color: Colors.accentGold,
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 0.5,
+  logoImage: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
   },
   logoText: {
     fontSize: 17,

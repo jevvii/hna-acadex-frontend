@@ -3,7 +3,7 @@ import React, { useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity,
   StyleSheet, ScrollView, KeyboardAvoidingView,
-  Platform, ActivityIndicator, Alert,
+  Platform, ActivityIndicator, Alert, Image,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuth } from '@/contexts/AuthContext';
@@ -50,9 +50,11 @@ export function LoginScreen() {
       >
         {/* Header */}
         <View style={styles.header}>
-          <View style={styles.logoBadge}>
-            <Text style={styles.logoBadgeText}>HNA</Text>
-          </View>
+          <Image
+            source={require('../../../assets/icon.png')}
+            style={styles.logoImage}
+            resizeMode="contain"
+          />
           <Text style={[styles.title, { color: Colors.primary }]}>HNA Acadex</Text>
           <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
             Holy Name Academy of Palanas, Inc.
@@ -145,21 +147,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: Spacing.xxxl,
   },
-  logoBadge: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: Colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
+  logoImage: {
+    width: 80,
+    height: 80,
     marginBottom: Spacing.md,
-    borderWidth: 2,
-    borderColor: Colors.accentGold,
-  },
-  logoBadgeText: {
-    color: Colors.accentGold,
-    fontSize: 18,
-    fontWeight: '800',
   },
   title: {
     fontSize: 32,
