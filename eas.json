@@ -5,18 +5,27 @@
   "build": {
     "development": {
       "developmentClient": true,
-      "distribution": "internal"
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://hna-acadex-backend.onrender.com/api"
+      }
     },
     "preview": {
       "distribution": "internal",
       "android": {
         "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://hna-acadex-backend.onrender.com/api"
       }
     },
     "production": {
       "distribution": "store",
       "android": {
         "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://hna-acadex-backend.onrender.com/api"
       }
     }
   },
