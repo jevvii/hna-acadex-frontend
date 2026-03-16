@@ -8,6 +8,7 @@ import Toast from 'react-native-toast-message';
 import { AuthProvider } from '@/contexts/AuthContext';
 import { ThemeProvider, useTheme } from '@/contexts/ThemeContext';
 import { NotificationProvider } from '@/contexts/NotificationContext';
+import { ErrorBoundary } from '@/components/shared/ErrorBoundary';
 import * as SplashScreen from 'expo-splash-screen';
 
 SplashScreen.preventAutoHideAsync();
@@ -38,13 +39,15 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
-        <ThemeProvider>
-          <AuthProvider>
-            <NotificationProvider>
-              <RootLayoutInner />
-            </NotificationProvider>
-          </AuthProvider>
-        </ThemeProvider>
+        <ErrorBoundary>
+          <ThemeProvider>
+            <AuthProvider>
+              <NotificationProvider>
+                <RootLayoutInner />
+              </NotificationProvider>
+            </AuthProvider>
+          </ThemeProvider>
+        </ErrorBoundary>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );
