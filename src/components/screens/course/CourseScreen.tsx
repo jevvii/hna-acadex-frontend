@@ -1865,8 +1865,6 @@ export function CourseScreen() {
           return null; // Allow graceful fallback
         }),
       ]);
-      console.log('[openQuizInfo] attemptData:', attemptData);
-      console.log('[openQuizInfo] attemptData.attempts:', attemptData?.attempts);
 
       // If attemptData is available, use it; otherwise fallback to quiz.my_attempt
       if (attemptData) {

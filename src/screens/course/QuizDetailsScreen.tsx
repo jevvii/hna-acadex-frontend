@@ -104,16 +104,6 @@ export function QuizDetailsScreen({
 
   const quiz = propQuiz;
 
-  // Debug log for quizStats
-  useEffect(() => {
-    console.log('[QuizDetailsScreen] quizStats:', quizStats);
-    console.log('[QuizDetailsScreen] quizStats.attempts:', quizStats?.attempts);
-    console.log('[QuizDetailsScreen] attempts length:', quizStats?.attempts?.length);
-    console.log('[QuizDetailsScreen] quiz.my_attempt:', quiz?.my_attempt);
-    console.log('[QuizDetailsScreen] attemptsUsed:', attemptsUsed);
-    console.log('[QuizDetailsScreen] attemptsLimit:', attemptsLimit);
-  }, [quizStats, quiz?.my_attempt, attemptsUsed, attemptsLimit]);
-
   // Derive quiz status
   const quizStatus = useMemo(() => {
     if (!quiz) return 'closed';
