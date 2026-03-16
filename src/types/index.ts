@@ -92,6 +92,18 @@ export interface Enrollment {
   enrolled_at: string;
 }
 
+// Grade summary metadata for badge display
+export interface GradeSummary {
+  graded_items_count: number;
+  total_items_count: number;
+  pending_items_count: number;
+  excluded_items_count: number;
+  has_pending: boolean;
+  has_released_grades: boolean;
+  has_no_gradeable_items: boolean;
+  is_partial: boolean;
+}
+
 // View types (joined data)
 export interface StudentCourse {
   student_id: string;
@@ -111,6 +123,7 @@ export interface StudentCourse {
   course_tag: string; // e.g. "EARTH11@STEM-A"
   semester?: string;
   school_year: string;
+  grade_summary?: GradeSummary;
 }
 
 export interface TeacherCourse {

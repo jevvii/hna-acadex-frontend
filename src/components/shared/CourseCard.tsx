@@ -111,36 +111,73 @@ export function TeacherCourseCard({ course, onPress }: TeacherCourseCardProps) {
 
 function CardContent({ course, showGrade }: { course: StudentCourse; showGrade: boolean }) {
   const hasGrade = typeof course.final_grade === 'number';
-  const gradeValue = hasGrade ? Number(course.final_grade).toFixed(2) : null;
+  const gradeValue = hasGrade ? Number(course.final_grade).toFixed(0) : null;
   const letter = course.final_grade_letter || '';
   const numeric = hasGrade ? Number(course.final_grade) : null;
-  const badgeStyle = numeric == null
-    ? styles.gradeBadgeNone
-    : numeric >= 90
-      ? styles.gradeBadgeHigh
-      : numeric >= 75
-        ? styles.gradeBadgeGood
-        : numeric >= 60
-          ? styles.gradeBadgeWarn
-          : styles.gradeBadgeLow;
-  const gradeTextStyle = numeric == null
-    ? styles.gradeTextNone
-    : numeric >= 90
-      ? styles.gradeTextHigh
-      : numeric >= 75
-        ? styles.gradeTextGood
-        : numeric >= 60
-          ? styles.gradeTextWarn
-          : styles.gradeTextLow;
+
+  // Get grade summary for edge case handling
+  const summary = course.grade_summary;
+  const hasNoGradeableItems = summary?.has_no_gradeable_items ?? false;
+  const hasReleasedGrades = summary?.has_released_grades ?? false;
+  const hasPending = summary?.has_pending ?? false;
+  const isPartial = summary?.is_partial ?? false;
+  const gradedCount = summary?.graded_items_count ?? 0;
+  const totalCount = summary?.total_items_count ?? 0;
+
+  // Determine badge display state
+  // 1. No gradeable items -> "No Grades"
+  // 2. No released grades, no pending -> "No Grades Yet"
+  // 3. No released grades, has pending -> "Pending"
+  // 4. Has released grades -> Show percentage and letter
+  // 5. Extra credit over 100% -> cap at 100%
+
+  const getBadgeContent = () => {
+    if (hasNoGradeableItems) {
+      return { text: 'No Grades', style: styles.gradeBadgeNone, textStyle: styles.gradeTextNone };
+    }
+    if (!hasReleasedGrades && !hasPending) {
+      return { text: 'No Grades Yet', style: styles.gradeBadgeNone, textStyle: styles.gradeTextNone };
+    }
+    if (!hasReleasedGrades && hasPending) {
+      return { text: 'Pending', style: styles.gradeBadgePending, textStyle: styles.gradeTextPending };
+    }
+    // Has released grades - show the grade
+    const displayGrade = numeric !== null && numeric > 100 ? 100 : numeric;
+    const displayValue = displayGrade !== null ? displayGrade.toFixed(0) : gradeValue;
+
+    let badgeStyle, textStyle;
+    if (displayGrade === null || displayGrade < 50) {
+      badgeStyle = styles.gradeBadgeLow;
+      textStyle = styles.gradeTextLow;
+    } else if (displayGrade < 75) {
+      badgeStyle = styles.gradeBadgeWarn;
+      textStyle = styles.gradeTextWarn;
+    } else if (displayGrade < 90) {
+      badgeStyle = styles.gradeBadgeGood;
+      textStyle = styles.gradeTextGood;
+    } else {
+      badgeStyle = styles.gradeBadgeHigh;
+      textStyle = styles.gradeTextHigh;
+    }
+
+    return { text: `${displayValue}% ${letter}`, style: badgeStyle, textStyle };
+  };
+
+  const { text, style: badgeStyle, textStyle: gradeTextStyle } = getBadgeContent();
 
   return (
     <View style={styles.cardInner}>
       {/* Grade badge top-right */}
       {showGrade && (
-        <View style={[styles.gradeBadge, badgeStyle]}>
-          <Text style={[styles.gradeText, gradeTextStyle]}>
-            {hasGrade ? `${gradeValue}% ${letter}` : 'No Grade Yet'}
-          </Text>
+        <View style={styles.gradeBadgeContainer}>
+          <View style={[styles.gradeBadge, badgeStyle]}>
+            <Text style={[styles.gradeText, gradeTextStyle]}>{text}</Text>
+          </View>
+          {isPartial && hasReleasedGrades && (
+            <Text style={styles.gradeSubtext}>
+              Based on {gradedCount} of {totalCount}
+            </Text>
+          )}
         </View>
       )}
       <View style={styles.cardBottom}>
@@ -198,16 +235,27 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '800',
   },
+  gradeBadgeContainer: {
+    alignItems: 'flex-end',
+    gap: 2,
+  },
   gradeBadgeHigh: { backgroundColor: '#E8F5E9', borderColor: '#A5D6A7' },
   gradeBadgeGood: { backgroundColor: '#E3F2FD', borderColor: '#90CAF9' },
   gradeBadgeWarn: { backgroundColor: '#FFF3E0', borderColor: '#FFCC80' },
   gradeBadgeLow: { backgroundColor: '#FFEBEE', borderColor: '#FFCDD2' },
   gradeBadgeNone: { backgroundColor: 'rgba(255,255,255,0.22)', borderColor: 'rgba(255,255,255,0.28)' },
+  gradeBadgePending: { backgroundColor: 'rgba(255,255,255,0.3)', borderColor: 'rgba(255,255,255,0.4)' },
   gradeTextHigh: { color: '#2E7D32' },
   gradeTextGood: { color: '#1565C0' },
   gradeTextWarn: { color: '#ED6C02' },
   gradeTextLow: { color: '#C62828' },
   gradeTextNone: { color: '#FFFFFF' },
+  gradeTextPending: { color: '#FFFFFF' },
+  gradeSubtext: {
+    fontSize: 9,
+    color: 'rgba(255,255,255,0.7)',
+    marginTop: 2,
+  },
   studentCountBadge: {
     alignSelf: 'flex-end',
     backgroundColor: 'rgba(255,255,255,0.2)',
