@@ -50,13 +50,11 @@ export function LoginScreen() {
       >
         {/* Header */}
         <View style={styles.header}>
-          <View style={[styles.logoContainer, { backgroundColor: isDark ? Colors.primary : Colors.primary }]}>
-            <Image
-              source={require('../../../assets/icon-transparent.png')}
-              style={styles.logoImage}
-              resizeMode="contain"
-            />
-          </View>
+          <Image
+            source={require('../../../assets/icon.png')}
+            style={styles.logoImage}
+            resizeMode="contain"
+          />
           <Text style={[styles.title, { color: isDark ? '#FFFFFF' : Colors.primary }]}>HNA Acadex</Text>
           <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
             Holy Name Academy of Palanas, Inc.
@@ -149,18 +147,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: Spacing.xxxl,
   },
-  logoContainer: {
-    width: 88,
-    height: 88,
-    borderRadius: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: Spacing.md,
-    overflow: 'hidden',
-  },
   logoImage: {
-    width: 72,
-    height: 72,
+    width: 80,
+    height: 80,
+    marginBottom: Spacing.md,
   },
   title: {
     fontSize: 32,
