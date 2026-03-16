@@ -16,7 +16,7 @@ export function LoginScreen() {
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const { signIn } = useAuth();
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const router = useRouter();
 
   const handleSubmit = async () => {
@@ -50,12 +50,14 @@ export function LoginScreen() {
       >
         {/* Header */}
         <View style={styles.header}>
-          <Image
-            source={require('../../../assets/icon.png')}
-            style={styles.logoImage}
-            resizeMode="contain"
-          />
-          <Text style={[styles.title, { color: Colors.primary }]}>HNA Acadex</Text>
+          <View style={[styles.logoContainer, { backgroundColor: isDark ? Colors.primary : Colors.primary }]}>
+            <Image
+              source={require('../../../assets/icon-transparent.png')}
+              style={styles.logoImage}
+              resizeMode="contain"
+            />
+          </View>
+          <Text style={[styles.title, { color: isDark ? '#FFFFFF' : Colors.primary }]}>HNA Acadex</Text>
           <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
             Holy Name Academy of Palanas, Inc.
           </Text>
@@ -147,10 +149,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: Spacing.xxxl,
   },
-  logoImage: {
-    width: 80,
-    height: 80,
+  logoContainer: {
+    width: 88,
+    height: 88,
+    borderRadius: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
     marginBottom: Spacing.md,
+    overflow: 'hidden',
+  },
+  logoImage: {
+    width: 72,
+    height: 72,
   },
   title: {
     fontSize: 32,
