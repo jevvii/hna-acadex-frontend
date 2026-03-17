@@ -24,7 +24,7 @@ const ROLE_BADGE: Record<string, { bg: string; text: string; label: string }> = 
 };
 
 export function Sidebar({ visible, onClose }: SidebarProps) {
-  const { user, signOut, updateProfile } = useAuth();
+  const { user, signOut, refreshProfile } = useAuth();
   const { colors, isDark, themeMode, setThemeMode } = useTheme();
   const router = useRouter();
 
@@ -64,10 +64,9 @@ export function Sidebar({ visible, onClose }: SidebarProps) {
         const fileName = `avatar-${user?.id}.${ext}`;
         const formData = new FormData();
         formData.append('file', { uri: asset.uri, name: fileName, type: `image/${ext}` } as any);
-        const data = await api.postForm('/profiles/me/avatar/', formData);
-        if (data?.avatar_url) {
-          await updateProfile({ avatar_url: data.avatar_url });
-        }
+        await api.postForm('/profiles/me/avatar/', formData);
+        // Refresh profile to get the updated avatar_url from server
+        await refreshProfile();
       } catch {
         Alert.alert('Error', 'Failed to upload photo. Please try again.');
       }

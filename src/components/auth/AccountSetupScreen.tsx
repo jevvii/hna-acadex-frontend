@@ -17,7 +17,9 @@ interface AccountSetupScreenProps {
 }
 
 export function AccountSetupScreen({ skipPhotoUpload = false }: AccountSetupScreenProps) {
-  const [step, setStep] = useState<'photo' | 'password'>(skipPhotoUpload ? 'password' : 'photo');
+  // Skip photo step if user already has an avatar or skipPhotoUpload prop is true
+  const shouldSkipPhoto = skipPhotoUpload || !!user?.avatar_url;
+  const [step, setStep] = useState<'photo' | 'password'>(shouldSkipPhoto ? 'password' : 'photo');
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
