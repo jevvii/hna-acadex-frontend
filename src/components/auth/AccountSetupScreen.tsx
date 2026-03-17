@@ -1,5 +1,5 @@
 // src/components/auth/AccountSetupScreen.tsx
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity,
   StyleSheet, ScrollView, KeyboardAvoidingView,
@@ -17,9 +17,12 @@ interface AccountSetupScreenProps {
 }
 
 export function AccountSetupScreen({ skipPhotoUpload = false }: AccountSetupScreenProps) {
-  // Skip photo step if user already has an avatar or skipPhotoUpload prop is true
-  const shouldSkipPhoto = skipPhotoUpload || !!user?.avatar_url;
-  const [step, setStep] = useState<'photo' | 'password'>(shouldSkipPhoto ? 'password' : 'photo');
+  const { user, completeSetup, refreshProfile } = useAuth();
+  const { colors } = useTheme();
+  const router = useRouter();
+
+  // Determine initial step - skip photo if user already has avatar
+  const [step, setStep] = useState<'photo' | 'password'>('photo');
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -27,9 +30,13 @@ export function AccountSetupScreen({ skipPhotoUpload = false }: AccountSetupScre
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const { user, completeSetup, refreshProfile } = useAuth();
-  const { colors } = useTheme();
-  const router = useRouter();
+
+  // Effect to skip photo step if user already has avatar
+  useEffect(() => {
+    if (skipPhotoUpload || user?.avatar_url) {
+      setStep('password');
+    }
+  }, [skipPhotoUpload, user?.avatar_url]);
 
   // Pick image from gallery
   const pickImage = async () => {
