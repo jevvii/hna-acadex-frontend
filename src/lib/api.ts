@@ -1,5 +1,5 @@
 import { Platform } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as SecureStore from 'expo-secure-store';
 
 const ACCESS_TOKEN_KEY = 'hna_access_token';
 const REFRESH_TOKEN_KEY = 'hna_refresh_token';
@@ -21,24 +21,42 @@ const resolveApiBaseUrl = () => {
 
 export const API_BASE_URL = resolveApiBaseUrl();
 
-async function getAccessToken() {
-  return AsyncStorage.getItem(ACCESS_TOKEN_KEY);
+export async function getAccessToken(): Promise<string | null> {
+  try {
+    return await SecureStore.getItemAsync(ACCESS_TOKEN_KEY);
+  } catch {
+    return null;
+  }
 }
 
-async function getRefreshToken() {
-  return AsyncStorage.getItem(REFRESH_TOKEN_KEY);
+export async function setAccessToken(token: string): Promise<void> {
+  await SecureStore.setItemAsync(ACCESS_TOKEN_KEY, token);
 }
 
-export async function setAuthTokens(access: string, refresh: string) {
-  await AsyncStorage.multiSet([
-    [ACCESS_TOKEN_KEY, access],
-    [REFRESH_TOKEN_KEY, refresh],
-  ]);
+export async function getRefreshToken(): Promise<string | null> {
+  try {
+    return await SecureStore.getItemAsync(REFRESH_TOKEN_KEY);
+  } catch {
+    return null;
+  }
 }
 
-export async function clearAuthTokens() {
-  await AsyncStorage.multiRemove([ACCESS_TOKEN_KEY, REFRESH_TOKEN_KEY]);
+export async function setRefreshToken(token: string): Promise<void> {
+  await SecureStore.setItemAsync(REFRESH_TOKEN_KEY, token);
 }
+
+export async function setAuthTokens(access: string, refresh: string): Promise<void> {
+  await SecureStore.setItemAsync(ACCESS_TOKEN_KEY, access);
+  await SecureStore.setItemAsync(REFRESH_TOKEN_KEY, refresh);
+}
+
+export async function clearTokens(): Promise<void> {
+  await SecureStore.deleteItemAsync(ACCESS_TOKEN_KEY);
+  await SecureStore.deleteItemAsync(REFRESH_TOKEN_KEY);
+}
+
+// Keep clearAuthTokens as an alias for backward compatibility
+export const clearAuthTokens = clearTokens;
 
 async function refreshAccessToken() {
   const refresh = await getRefreshToken();
@@ -55,7 +73,7 @@ async function refreshAccessToken() {
   const data = await res.json();
   if (!data?.access) return null;
 
-  await AsyncStorage.setItem(ACCESS_TOKEN_KEY, data.access);
+  await setAccessToken(data.access);
   return data.access as string;
 }
 
