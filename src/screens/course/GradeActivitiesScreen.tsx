@@ -19,7 +19,6 @@ import {
   LayoutAnimation,
   UIManager,
 } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
@@ -28,7 +27,7 @@ import { useTheme } from '@/contexts/ThemeContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { Activity, Submission, ActivityComment } from '@/types';
 import { activityCommentsApi } from '@/services/activityComments';
-import { api } from '@/lib/api';
+import { api, getAccessToken } from '@/lib/api';
 import { Colors, Spacing, Radius, Shadows } from '@/constants/colors';
 import { resolveBackendFileUrl, isImageFile, fileNameFromUrl } from './utils';
 
@@ -156,7 +155,7 @@ export function GradeActivitiesScreen({
   // Fetch auth token for authenticated image loading
   useEffect(() => {
     const fetchToken = async () => {
-      const token = await AsyncStorage.getItem('hna_access_token');
+      const token = await getAccessToken();
       if (token) {
         setAuthHeaders({ Authorization: `Bearer ${token}` });
       }
