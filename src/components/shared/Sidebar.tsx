@@ -183,11 +183,15 @@ export function Sidebar({ visible, onClose }: SidebarProps) {
 
               {/* Settings items */}
               {[
-                { icon: 'notifications-outline', label: 'Notification Preferences' },
-                { icon: 'person-outline', label: 'Account Settings' },
-                { icon: 'shield-checkmark-outline', label: 'Privacy & Security' },
+                { icon: 'notifications-outline', label: 'Notification Preferences', route: '/(app)/settings/notifications' },
+                { icon: 'person-outline', label: 'Account Settings', route: '/(app)/settings/account' },
+                { icon: 'shield-checkmark-outline', label: 'Privacy & Security', route: '/(app)/settings/security' },
               ].map((item) => (
-                <TouchableOpacity key={item.label} style={styles.settingRow}>
+                <TouchableOpacity
+                  key={item.label}
+                  style={styles.settingRow}
+                  onPress={() => { router.push(item.route as any); onClose(); }}
+                >
                   <Ionicons name={item.icon as any} size={18} color={colors.textSecondary} />
                   <Text style={[styles.settingRowText, { color: colors.textPrimary }]}>{item.label}</Text>
                   <Ionicons name="chevron-forward" size={16} color={colors.mutedForeground} />

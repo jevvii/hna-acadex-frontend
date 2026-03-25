@@ -40,6 +40,9 @@ export default function AppLayout() {
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="course/[id]" options={{ animation: 'slide_from_right' }} />
+        <Stack.Screen name="settings/index" options={{ animation: 'slide_from_right' }} />
+        <Stack.Screen name="settings/notifications" options={{ animation: 'slide_from_right' }} />
+        <Stack.Screen name="settings/account" options={{ animation: 'slide_from_right' }} />
       </Stack>
     </View>
   );
