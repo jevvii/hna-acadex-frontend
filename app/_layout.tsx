@@ -10,6 +10,7 @@ import { AuthProvider } from '@/contexts/AuthContext';
 import { ThemeProvider, useTheme } from '@/contexts/ThemeContext';
 import { NotificationProvider } from '@/contexts/NotificationContext';
 import { ErrorBoundary } from '@/components/shared/ErrorBoundary';
+import { OfflineIndicator } from '@/components/OfflineIndicator';
 import { queryClient } from '@/lib/queryClient';
 import * as SplashScreen from 'expo-splash-screen';
 
@@ -25,6 +26,7 @@ function RootLayoutInner() {
   return (
     <>
       <StatusBar style={isDark ? 'light' : 'dark'} />
+      <OfflineIndicator />
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="index" />
         <Stack.Screen name="login" />
