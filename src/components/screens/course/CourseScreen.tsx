@@ -25,6 +25,15 @@ import { ActivityDetailsScreen } from '@/screens/course/ActivityDetailsScreen';
 import { ActivitySubmissionScreen } from '@/screens/course/ActivitySubmissionScreen';
 import { GradeActivitiesScreen } from '@/screens/course/GradeActivitiesScreen';
 import { QuizDetailsScreen } from '@/screens/course/QuizDetailsScreen';
+import {
+  ModulesTab,
+  AssignmentsTab,
+  QuizzesTab,
+  AttendanceTab,
+  GradesTab,
+  FilesTab,
+  AnnouncementsTab,
+} from '@/screens/course/tabs';
 import { WeeklyModule, Activity, CourseFile, Announcement, Quiz, AttendanceStatus, GradebookData, GradebookStudent, GradebookItem, GradebookSummary } from '@/types';
 import { GradebookTable } from '@/components/gradebook';
 import { Colors, Spacing, Radius, Shadows, Typography } from '@/constants/colors';
@@ -1944,956 +1953,262 @@ export function CourseScreen() {
       ) : (
         <ScrollView style={styles.tabContent} contentContainerStyle={styles.tabContentInner} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />}>
           {activeTab === 'modules' && (
-            <>
-              {modules.length === 0 ? <EmptyState icon="📋" title="No modules yet" /> :
-              modules.map((mod) => {
-                const expanded = expandedModules[mod.id] !== false;
-                const progress = moduleProgress(mod.id);
-                const modAssignments = activities.filter((a) => a.weekly_module_id === mod.id);
-                const modQuizzes = quizzes.filter((q) => q.weekly_module_id === mod.id);
-                const modFiles = files.filter((f) => f.weekly_module_id === mod.id);
-                return (
-                  <View key={mod.id} style={[styles.moduleCanvasCard, { borderColor: '#E0E0E0', backgroundColor: '#FFFFFF' }]}>
-                    <TouchableOpacity style={styles.moduleCanvasHeader} onPress={() => toggleModuleExpanded(mod.id)} activeOpacity={0.9}>
-                      <View style={styles.moduleCanvasHeaderLeft}>
-                        <Text style={styles.moduleCanvasWeekLabel}>{mod.is_exam_week ? 'Exam Week' : `Week ${mod.week_number}`}</Text>
-                        <Text style={styles.moduleCanvasTitle}>{mod.title}</Text>
-                        {!!mod.description && <Text style={styles.moduleCanvasDesc} numberOfLines={expanded ? 3 : 1}>{mod.description}</Text>}
-                      </View>
-                      <View style={styles.moduleCanvasHeaderRight}>
-                        {canManage && (
-                          <TouchableOpacity
-                            style={[styles.statusBadge, mod.is_published ? styles.statusBadgePublished : styles.statusBadgeDraft]}
-                            onPress={() => togglePublishByType('module', mod)}
-                          >
-                            <Text style={[styles.statusBadgeText, mod.is_published ? styles.statusBadgeTextPublished : styles.statusBadgeTextDraft]}>
-                              {mod.is_published ? 'Published' : 'Draft'}
-                            </Text>
-                          </TouchableOpacity>
-                        )}
-                        <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={18} color="#6B6B6B" />
-                      </View>
-                    </TouchableOpacity>
-
-                    {!canManage && (
-                      <View style={styles.moduleProgressWrap}>
-                        <View style={styles.moduleProgressTrack}>
-                          <View style={[styles.moduleProgressFill, { width: `${progress.percent}%` }]} />
-                        </View>
-                        <Text style={styles.moduleProgressText}>{progress.completed}/{progress.total} completed</Text>
-                      </View>
-                    )}
-
-                    {expanded && (
-                      <View style={styles.moduleCanvasBody}>
-                        {(() => {
-                          const moduleItems = [
-                            ...modAssignments.map((a) => ({
-                              key: `a-${a.id}`,
-                              kind: 'assignment' as const,
-                              title: a.title,
-                              meta: a.deadline ? `Due ${formatDate(a.deadline)}` : 'No due date',
-                              locked: !a.is_published,
-                              complete: !!a.my_submission,
-                              published: !!a.is_published,
-                              icon: 'document-text-outline' as const,
-                              iconColor: Colors.primary,
-                              onPress: () => openActivityDetail(a),
-                              onTogglePublish: () => togglePublishByType('assignment', a),
-                            })),
-                            ...modQuizzes.map((q) => {
-                              const now = new Date();
-                              const isUpcoming = !!q.open_at && new Date(q.open_at) > now;
-                              const metaText = isUpcoming
-                                ? `Opens ${formatDate(q.open_at!)}`
-                                : (q.close_at ? `Closes ${formatDate(q.close_at)}` : 'No close date');
-                              return {
-                                key: `q-${q.id}`,
-                                kind: 'quiz' as const,
-                                title: q.title,
-                                meta: metaText,
-                                locked: !q.is_published || (!!q.open_at && new Date(q.open_at) > now) || (!!q.close_at && new Date(q.close_at) < now),
-                                complete: (q.my_attempt?.attempts_used ?? 0) > 0,
-                                published: !!q.is_published,
-                                icon: 'rocket-outline' as const,
-                                iconColor: Colors.accentGold,
-                                onPress: () => openQuizFromModules(q),
-                                onTogglePublish: () => togglePublishByType('quiz', q),
-                              };
-                            }),
-                            ...modFiles.map((f) => {
-                              const hidden = !f.is_visible;
-                              return {
-                                key: `f-${f.id}`,
-                                kind: 'file' as const,
-                                title: f.file_name,
-                                meta: `Material • ${formatDate(f.created_at)}`,
-                                locked: hidden,
-                                complete: !hidden,
-                                published: !!f.is_visible,
-                                icon: 'cloud-download-outline' as const,
-                                iconColor: Colors.primary,
-                                onPress: () => f.file_url && openDocumentInApp(f.file_url, f.file_name, f.preview_file_url),
-                                onTogglePublish: () => togglePublishByType('file', f),
-                              };
-                            }),
-                          ];
-
-                          if (moduleItems.length === 0) return <Text style={styles.moduleEmptyText}>No module contents yet.</Text>;
-
-                          return moduleItems.map((item) => (
-                            <TouchableOpacity
-                              key={item.key}
-                              style={[styles.moduleCanvasItem, item.locked && styles.moduleCanvasItemDisabled]}
-                              onPress={item.onPress}
-                              activeOpacity={0.85}
-                            >
-                              <View style={styles.moduleItemMain}>
-                                <Ionicons name={item.icon} size={16} color={item.iconColor} />
-                                <View style={{ flex: 1 }}>
-                                  <Text style={styles.moduleItemTitle} numberOfLines={1}>{item.title}</Text>
-                                  {!compactMeta && <Text style={styles.moduleItemMeta}>{item.meta}</Text>}
-                                  {!canManage && item.kind === 'assignment' && <Text style={styles.moduleRequirement}>Submit this assignment</Text>}
-                                  {!canManage && item.kind === 'quiz' && <Text style={styles.moduleRequirement}>Complete quiz requirement</Text>}
-                                </View>
-                              </View>
-                              <View style={styles.moduleItemRight}>
-                                {!canManage && <Ionicons name={item.locked ? 'lock-closed-outline' : (item.complete ? 'checkmark-circle' : 'ellipse-outline')} size={18} color={item.locked ? '#6B7280' : (item.complete ? '#16A34A' : '#9CA3AF')} />}
-                                {canManage && (
-                                  <>
-                                    <TouchableOpacity onPress={item.onTogglePublish}>
-                                      <Ionicons name={item.published ? 'checkmark-circle' : 'ellipse-outline'} size={18} color={item.published ? '#16A34A' : '#9CA3AF'} />
-                                    </TouchableOpacity>
-                                    <Ionicons name="reorder-three-outline" size={18} color="#9CA3AF" />
-                                  </>
-                                )}
-                              </View>
-                            </TouchableOpacity>
-                          ));
-                        })()}
-
-                        {canManage && (
-                          <View style={styles.moduleFooterActions}>
-                            <TouchableOpacity style={styles.moduleFooterBtn} onPress={() => addItemToModule('assignments', mod.id)}><Text style={styles.moduleFooterBtnText}>+ Assignment</Text></TouchableOpacity>
-                            <TouchableOpacity style={styles.moduleFooterBtn} onPress={() => addItemToModule('quizzes', mod.id)}><Text style={styles.moduleFooterBtnText}>+ Quiz</Text></TouchableOpacity>
-                            <TouchableOpacity style={styles.moduleFooterBtn} onPress={() => addItemToModule('files', mod.id)}><Text style={styles.moduleFooterBtnText}>+ File/Link</Text></TouchableOpacity>
-                          </View>
-                        )}
-                      </View>
-                    )}
-                  </View>
-                );
-              })}
-            </>
+            <ModulesTab
+              modules={modules}
+              activities={activities}
+              quizzes={quizzes}
+              files={files}
+              expandedModules={expandedModules}
+              canManage={canManage}
+              compactMeta={compactMeta}
+              onToggleModule={toggleModuleExpanded}
+              onTogglePublish={togglePublishByType}
+              onOpenActivity={openActivityDetail}
+              onOpenQuiz={openQuizFromModules}
+              onOpenFile={(file) => file.file_url && openDocumentInApp(file.file_url, file.file_name, file.preview_file_url)}
+              onAddItem={addItemToModule}
+              onEdit={openEdit}
+              onDelete={deleteItem}
+            />
           )}
 
           {activeTab === 'assignments' && (
-            <>
-            {activities.length === 0 ? <EmptyState icon="📝" title="No assignments yet" /> : (
-              (() => {
-                const now = new Date();
-                const overdue = activities.filter(a => !!a.deadline && new Date(a.deadline) < now && !a.my_submission);
-                const upcoming = activities.filter(a => !a.deadline || (a.deadline && new Date(a.deadline) >= now) || a.my_submission);
-                const undated = activities.filter(a => !a.deadline && !a.my_submission);
-                // Remove undated from upcoming if already in upcoming
-                const upcomingFiltered = upcoming.filter(a => a.deadline);
-
-                const renderAssignmentCard = (act: Activity) => (
-                  <View
-                    key={act.id}
-                    style={[
-                      styles.actCard,
-                      { backgroundColor: colors.surface },
-                      !canManage && !!act.deadline && new Date(act.deadline) < new Date() && !act.my_submission && styles.missingCard,
-                      Shadows.sm,
-                    ]}
-                  >
-                    <TouchableOpacity
-                      activeOpacity={0.9}
-                      onPress={() => openActivityDetail(act)}
-                      disabled={canManage}
-                      style={styles.actCardTouchable}
-                    >
-                      <View style={styles.actHeader}>
-                        <Ionicons name="document-text-outline" size={20} color={Colors.primaryLight} />
-                        <View style={styles.actInfo}>
-                          <Text
-                            style={[
-                              styles.actTitle,
-                              { color: colors.textPrimary },
-                              !canManage && !!act.deadline && new Date(act.deadline) < new Date() && !act.my_submission && styles.missingTitle,
-                            ]}
-                          >
-                            {act.title}
-                          </Text>
-                          {!!act.deadline && <Text style={[styles.actDeadline, { color: new Date(act.deadline) < new Date() ? Colors.accentRed : colors.textSecondary }]}>Due: {formatDate(act.deadline)}</Text>}
-                        </View>
-                        <View style={styles.pointsBadge}><Text style={styles.pointsText}>{act.points}pts</Text></View>
-                      </View>
-                      {!canManage && !!act.deadline && new Date(act.deadline) < new Date() && !act.my_submission && (
-                        <View style={styles.missingBadge}><Text style={styles.missingBadgeText}>Missing</Text></View>
-                      )}
-                      <Text style={[styles.topicBadge, { color: colors.textSecondary }]}>{weekLabel(act.weekly_module_id)}</Text>
-                      {!!act.description && <Text style={[styles.actDesc, { color: colors.textSecondary }]} numberOfLines={2}>{act.description}</Text>}
-                    </TouchableOpacity>
-                    {!canManage && (
-                      <View style={styles.studentActionRow}>
-                        <TouchableOpacity style={styles.inlineBtn} onPress={() => openActivityDetail(act)}>
-                          <Text style={styles.inlineBtnText}>Details</Text>
-                        </TouchableOpacity>
-                        {act.my_submission?.score != null ? (
-                          <Text style={styles.gradePill}>Grade: {act.my_submission.score}/{act.points}</Text>
-                        ) : (
-                          <Text style={styles.pendingPill}>{act.my_submission ? 'Submitted' : 'Not submitted'}</Text>
-                        )}
-                      </View>
-                    )}
-                    {canManage && (
-                      <TouchableOpacity style={styles.inlineBtn} onPress={() => openActivityGrading(act)}>
-                        <Text style={styles.inlineBtnText}>Grade Submissions</Text>
-                      </TouchableOpacity>
-                    )}
-                    {canManage && <ItemActions onEdit={() => openEdit(act)} onDelete={() => deleteItem(act.id)} />}
-                  </View>
-                );
-
-                const renderAccordionSection = (title: string, items: Activity[], accentColor: string) => (
-                  items.length > 0 && (
-                    <View key={title} style={styles.accordionSection}>
-                      <View style={[styles.accordionHeader, { borderBottomColor: colors.border }]}>
-                        <View style={[styles.accordionAccent, { backgroundColor: accentColor }]} />
-                        <Text style={[styles.accordionTitle, { color: colors.textSecondary }]}>{title}</Text>
-                        <Text style={[styles.accordionCount, { color: colors.mutedForeground }]}>{items.length}</Text>
-                      </View>
-                      <View style={styles.accordionContent}>
-                        {items.map(renderAssignmentCard)}
-                      </View>
-                    </View>
-                  )
-                );
-
-                return (
-                  <>
-                    {renderAccordionSection('Upcoming', upcomingFiltered, Colors.primary)}
-                    {renderAccordionSection('Undated', undated, colors.mutedForeground)}
-                    {renderAccordionSection('Overdue', overdue, Colors.accentRed)}
-                  </>
-                );
-              })()
-            )}
-            </>
+            <AssignmentsTab
+              activities={activities}
+              modules={modules}
+              canManage={canManage}
+              onOpenActivity={openActivityDetail}
+              onGradeActivity={openActivityGrading}
+              onEdit={openEdit}
+              onDelete={deleteItem}
+            />
           )}
 
           {activeTab === 'attendance' && (
-            attendanceLoading ? (
-              <View style={styles.centered}><ActivityIndicator size="large" color={Colors.primary} /></View>
-            ) : canManage ? (
-              <View style={styles.attendanceContainer}>
-                {/* Roll Call Header */}
-                <RollCallHeader onSettingsPress={() => {}} />
-
-                {/* View Toggle */}
-                <View style={styles.viewToggleWrapper}>
-                  <ViewToggle value={rollCallViewMode} onChange={setRollCallViewMode} />
-                </View>
-
-                {rollCallViewMode === 'LIST' ? (
-                  /* LIST View - Student Cards */
-                  <>
-                    {/* Date Navigation */}
-                    <DateNavigation
-                      date={rollCallDate}
-                      onPrev={() => {
-                        const newDate = new Date(rollCallDate);
-                        newDate.setDate(newDate.getDate() - 1);
-                        setRollCallDate(newDate);
-                        // Clear pending statuses when changing dates
-                        setPendingAttendanceStatus({});
-                        // Check if there's a session for this date
-                        const sessionIndex = attendanceSessions.findIndex(
-                          (s) => new Date(s.date).toDateString() === newDate.toDateString()
-                        );
-                        setSelectedRollCallSessionIndex(sessionIndex >= 0 ? sessionIndex : -1);
-                      }}
-                      onNext={() => {
-                        const newDate = new Date(rollCallDate);
-                        newDate.setDate(newDate.getDate() + 1);
-                        setRollCallDate(newDate);
-                        // Clear pending statuses when changing dates
-                        setPendingAttendanceStatus({});
-                        // Check if there's a session for this date
-                        const sessionIndex = attendanceSessions.findIndex(
-                          (s) => new Date(s.date).toDateString() === newDate.toDateString()
-                        );
-                        setSelectedRollCallSessionIndex(sessionIndex >= 0 ? sessionIndex : -1);
-                      }}
-                      onCalendar={() => setRollCallDatePickerVisible(true)}
-                    />
-                    <ScrollView style={styles.studentList} contentContainerStyle={styles.studentListContent}>
-                      {/* Bulk Actions */}
-                      <BulkActions
-                        onMarkAllPresent={() => {
-                          if (selectedRollCallSessionIndex >= 0 && selectedRollCallSessionIndex < attendanceSessions.length) {
-                            const session = attendanceSessions[selectedRollCallSessionIndex];
-                            if (session) {
-                              updateAttendanceRecords(session.id, [], 'mark_all_present');
-                            }
-                          } else {
-                            // No session - mark all as present in pending status
-                            const allPresent: Record<string, AttendanceStatus> = {};
-                            attendanceStudents.forEach((stu) => {
-                              allPresent[stu.student_id] = 'Present';
-                            });
-                            setPendingAttendanceStatus(allPresent);
-                          }
-                        }}
-                        onUnmarkAll={() => {
-                          if (selectedRollCallSessionIndex >= 0 && selectedRollCallSessionIndex < attendanceSessions.length) {
-                            const session = attendanceSessions[selectedRollCallSessionIndex];
-                            if (session) {
-                              updateAttendanceRecords(session.id, [], 'clear_all');
-                            }
-                          } else {
-                            // No session - clear all pending statuses
-                            setPendingAttendanceStatus({});
-                          }
-                        }}
-                      />
-                      {attendanceStudents.length === 0 ? (
-                        <View style={styles.rollCallEmptyState}>
-                          <Ionicons name="people-outline" size={48} color="#94A3B8" />
-                          <Text style={styles.rollCallEmptyTitle}>No students enrolled</Text>
-                          <Text style={styles.rollCallEmptySubtext}>Students will appear here once enrolled</Text>
-                        </View>
-                      ) : (
-                        attendanceStudents.map((stu) => {
-                          const currentStatus = getCurrentAttendanceStatus(stu.student_id);
-                          return (
-                            <StudentAttendanceCard
-                              key={stu.student_id}
-                              student={stu}
-                              status={currentStatus}
-                              onStatusPress={() => {
-                                handleToggleAttendanceStatus(stu.student_id, currentStatus);
-                              }}
-                              onMorePress={() => {
-                                setSelectedStudentForMore({
-                                  student_id: stu.student_id,
-                                  student_name: stu.student_name,
-                                });
-                                setMoreSheetVisible(true);
-                              }}
-                            />
-                          );
-                        })
-                      )}
-                      {/* Save Attendance Button */}
-                      {attendanceStudents.length > 0 && (
-                        <View style={styles.saveAttendanceBtnContainer}>
-                          <TouchableOpacity
-                            style={styles.saveAttendanceBtn}
-                            onPress={async () => {
-                              // Check if session exists for current date
-                              const existingSessionIndex = attendanceSessions.findIndex(
-                                (s) => new Date(s.date).toDateString() === rollCallDate.toDateString()
-                              );
-                              if (existingSessionIndex >= 0) {
-                                // Session already exists - save pending statuses if any
-                                const session = attendanceSessions[existingSessionIndex];
-                                if (Object.keys(pendingAttendanceStatus).length > 0) {
-                                  // There are pending statuses to save
-                                  const records = Object.entries(pendingAttendanceStatus).map(([studentId, status]) => ({
-                                    student_id: studentId,
-                                    status: status,
-                                  }));
-                                  await updateAttendanceRecords(session.id, records);
-                                  clearPendingAttendance();
-                                }
-                                setSelectedRollCallSessionIndex(existingSessionIndex);
-                                Alert.alert('Success', 'Attendance saved successfully.');
-                              } else {
-                                // Create new session and save pending statuses
-                                const newSession = await createQuickAttendanceSession(rollCallDate);
-                                if (newSession && newSession.id && Object.keys(pendingAttendanceStatus).length > 0) {
-                                  // Save all pending statuses to the new session
-                                  const records = Object.entries(pendingAttendanceStatus).map(([studentId, status]) => ({
-                                    student_id: studentId,
-                                    status: status,
-                                  }));
-                                  await updateAttendanceRecords(newSession.id, records);
-                                  clearPendingAttendance();
-                                }
-                              }
-                            }}
-                          >
-                            <Ionicons name="save-outline" size={20} color="#FFFFFF" />
-                            <Text style={styles.saveAttendanceBtnText}>Save Attendance</Text>
-                          </TouchableOpacity>
-                        </View>
-                      )}
-                      <View style={{ height: 120 }} />
-                    </ScrollView>
-                  </>
-                ) : (
-                  /* CLASS View - Horizontal Table */
-                  <>
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                      <View style={styles.attTable}>
-                        <View style={styles.attHeaderRow}>
-                          <Text style={[styles.attCellHeader, styles.attStudentCol]}>Student</Text>
-                          {attendanceSessions.map((s) => (
-                            <TouchableOpacity key={s.id} style={styles.attSessionHeaderCell} onPress={() => {
-                              setSelectedAttendanceSessionId(s.id);
-                              setRollCallDate(new Date(s.date));
-                              const idx = attendanceSessions.findIndex((sess) => sess.id === s.id);
-                              if (idx >= 0) setSelectedRollCallSessionIndex(idx);
-                            }}>
-                              <Text style={styles.attCellHeader} numberOfLines={2}>{s.title}</Text>
-                              <Text style={styles.attSessionDate}>{formatDate(s.date)}</Text>
-                              <TouchableOpacity onPress={() => deleteAttendanceSession(s.id)}>
-                                <Ionicons name="trash-outline" size={14} color="#C62828" />
-                              </TouchableOpacity>
-                            </TouchableOpacity>
-                          ))}
-                          <Text style={[styles.attCellHeader, styles.attPctCol]}>%</Text>
-                        </View>
-
-                        {attendanceStudents.map((stu) => (
-                          <View key={stu.student_id} style={styles.attDataRow}>
-                            <Text style={[styles.attStudentName, styles.attStudentCol]} numberOfLines={1}>{stu.student_name}</Text>
-                            {attendanceSessions.map((s) => {
-                              const current = getAttendanceStatus(s.id, stu.student_id);
-                              return (
-                                <TouchableOpacity
-                                  key={`${s.id}:${stu.student_id}`}
-                                  style={[styles.attStatusCell, { backgroundColor: attendanceStatusBg(current) }]}
-                                  onPress={() =>
-                                    updateAttendanceRecords(s.id, [
-                                      { student_id: stu.student_id, status: nextAttendanceStatus(current) },
-                                    ])
-                                  }
-                                >
-                                  <Text style={[styles.attStatusText, { color: attendanceStatusColor(current) }]}>{current}</Text>
-                                </TouchableOpacity>
-                              );
-                            })}
-                            <Text style={[styles.attPctValue, styles.attPctCol]}>{stu.attendance_percentage || 0}%</Text>
-                          </View>
-                        ))}
-                      </View>
-                    </ScrollView>
-                  </>
-                )}
-
-                {/* Summary Footer */}
-                {selectedRollCallSessionIndex >= 0 && selectedRollCallSessionIndex < attendanceSessions.length && (
-                  <AttendanceSummaryFooter
-                    present={attendanceStudents.filter((stu) => {
-                      const session = attendanceSessions[selectedRollCallSessionIndex];
-                      return session && getAttendanceStatus(session.id, stu.student_id) === 'Present';
-                    }).length}
-                    absent={attendanceStudents.filter((stu) => {
-                      const session = attendanceSessions[selectedRollCallSessionIndex];
-                      return session && getAttendanceStatus(session.id, stu.student_id) === 'Absent';
-                    }).length}
-                    late={attendanceStudents.filter((stu) => {
-                      const session = attendanceSessions[selectedRollCallSessionIndex];
-                      return session && getAttendanceStatus(session.id, stu.student_id) === 'Late';
-                    }).length}
-                    excused={attendanceStudents.filter((stu) => {
-                      const session = attendanceSessions[selectedRollCallSessionIndex];
-                      return session && getAttendanceStatus(session.id, stu.student_id) === 'Excused';
-                    }).length}
-                    total={attendanceStudents.length}
-                  />
-                )}
-
-                {/* More Sheet */}
-                <StudentMoreSheet
-                  visible={moreSheetVisible}
-                  student={selectedStudentForMore}
-                  onClose={() => setMoreSheetVisible(false)}
-                  onAddNote={() => {
-                    setMoreSheetVisible(false);
-                    // TODO: Implement add note functionality
-                  }}
-                  onViewHistory={() => {
-                    setMoreSheetVisible(false);
-                    // TODO: Implement view history functionality
-                  }}
-                  onContactParent={() => {
-                    setMoreSheetVisible(false);
-                    // TODO: Implement contact parent functionality
-                  }}
-                />
-              </View>
-            ) : (
-              <ScrollView style={styles.studentList} contentContainerStyle={styles.studentListContent}>
-                {/* Modern Attendance Summary Card */}
-                <View style={styles.modernAttendanceCard}>
-                  {/* Header */}
-                  <View style={styles.modernAttHeader}>
-                    <View style={styles.modernAttHeaderLeft}>
-                      <Ionicons name="checkmark-circle-outline" size={20} color={Colors.primary} />
-                      <Text style={styles.modernAttTitle}>Attendance Summary</Text>
-                    </View>
-                    <TouchableOpacity style={styles.historyBtn} onPress={() => setAttendanceHistoryModalVisible(true)}>
-                      <Ionicons name="time-outline" size={14} color={Colors.primary} />
-                      <Text style={styles.historyBtnText}>History</Text>
-                    </TouchableOpacity>
-                  </View>
-
-                  {/* Circular Progress Section */}
-                  <View style={styles.circularProgressContainer}>
-                    <View style={styles.circleWrapper}>
-                      <Svg width={120} height={120} viewBox="0 0 120 120">
-                        {/* Background circle */}
-                        <Circle
-                          cx={60}
-                          cy={60}
-                          r={52}
-                          stroke="#E5E7EB"
-                          strokeWidth={10}
-                          fill="none"
-                        />
-                        {/* Progress circle */}
-                        <Circle
-                          cx={60}
-                          cy={60}
-                          r={52}
-                          stroke={Colors.primary}
-                          strokeWidth={10}
-                          fill="none"
-                          strokeDasharray={326.73}
-                          strokeDashoffset={326.73 - (326.73 * (studentAttendanceSummary?.attendance_percentage || 0)) / 100}
-                          strokeLinecap="round"
-                          transform="rotate(-90 60 60)"
-                        />
-                      </Svg>
-                      <View style={styles.circleCenter}>
-                        <Text style={styles.circlePercent}>{studentAttendanceSummary?.attendance_percentage || 0}%</Text>
-                        <Text style={styles.circleLabel}>Attendance</Text>
-                      </View>
-                    </View>
-                  </View>
-
-                  {/* Stats Grid */}
-                  <View style={styles.statsGrid}>
-                    <View style={styles.statItem}>
-                      <View style={[styles.statIconBg, { backgroundColor: '#22C55E20' }]}>
-                        <Ionicons name="checkmark-circle" size={18} color="#22C55E" />
-                      </View>
-                      <View style={styles.statInfo}>
-                        <Text style={styles.statValue}>{studentAttendanceSummary?.present_count || 0}</Text>
-                        <Text style={styles.statLabel}>Present</Text>
-                      </View>
-                    </View>
-                    <View style={styles.statItem}>
-                      <View style={[styles.statIconBg, { backgroundColor: '#9CA3AF20' }]}>
-                        <Ionicons name="ban" size={18} color="#9CA3AF" />
-                      </View>
-                      <View style={styles.statInfo}>
-                        <Text style={styles.statValue}>{studentAttendanceSummary?.excused_count || 0}</Text>
-                        <Text style={styles.statLabel}>Excused</Text>
-                      </View>
-                    </View>
-                    <View style={styles.statItem}>
-                      <View style={[styles.statIconBg, { backgroundColor: '#EF444420' }]}>
-                        <Ionicons name="close-circle" size={18} color="#EF4444" />
-                      </View>
-                      <View style={styles.statInfo}>
-                        <Text style={styles.statValue}>{studentAttendanceSummary?.absent_count || 0}</Text>
-                        <Text style={styles.statLabel}>Absent</Text>
-                      </View>
-                    </View>
-                    <View style={styles.statItem}>
-                      <View style={[styles.statIconBg, { backgroundColor: '#F59E0B20' }]}>
-                        <Ionicons name="time" size={18} color="#F59E0B" />
-                      </View>
-                      <View style={styles.statInfo}>
-                        <Text style={styles.statValue}>{studentAttendanceSummary?.late_count || 0}</Text>
-                        <Text style={styles.statLabel}>Late</Text>
-                      </View>
-                    </View>
-                    <View style={styles.statItem}>
-                      <View style={[styles.statIconBg, { backgroundColor: '#8B5CF620' }]}>
-                        <Ionicons name="calendar-outline" size={18} color="#8B5CF6" />
-                      </View>
-                      <View style={styles.statInfo}>
-                        <Text style={styles.statValue}>{studentAttendanceSummary?.total_sessions || 0}</Text>
-                        <Text style={styles.statLabel}>Sessions</Text>
-                      </View>
-                    </View>
-                  </View>
-                </View>
-              </ScrollView>
-            )
+            <AttendanceTab
+              loading={attendanceLoading}
+              canManage={canManage}
+              sessions={attendanceSessions}
+              students={attendanceStudents}
+              recordMap={attendanceRecordMap}
+              selectedSessionIndex={selectedRollCallSessionIndex}
+              rollCallDate={rollCallDate}
+              rollCallViewMode={rollCallViewMode}
+              pendingStatus={pendingAttendanceStatus}
+              moreSheetVisible={moreSheetVisible}
+              selectedStudentForMore={selectedStudentForMore}
+              rollCallDatePickerVisible={rollCallDatePickerVisible}
+              studentSummary={studentAttendanceSummary}
+              studentHistory={studentAttendanceHistory}
+              attendanceHistoryModalVisible={attendanceHistoryModalVisible}
+              onRefresh={onRefresh}
+              onToggleViewMode={setRollCallViewMode}
+              onDatePrev={() => {
+                const newDate = new Date(rollCallDate);
+                newDate.setDate(newDate.getDate() - 1);
+                setRollCallDate(newDate);
+                setPendingAttendanceStatus({});
+                const sessionIndex = attendanceSessions.findIndex(
+                  (s) => new Date(s.date).toDateString() === newDate.toDateString()
+                );
+                setSelectedRollCallSessionIndex(sessionIndex >= 0 ? sessionIndex : -1);
+              }}
+              onDateNext={() => {
+                const newDate = new Date(rollCallDate);
+                newDate.setDate(newDate.getDate() + 1);
+                setRollCallDate(newDate);
+                setPendingAttendanceStatus({});
+                const sessionIndex = attendanceSessions.findIndex(
+                  (s) => new Date(s.date).toDateString() === newDate.toDateString()
+                );
+                setSelectedRollCallSessionIndex(sessionIndex >= 0 ? sessionIndex : -1);
+              }}
+              onCalendar={() => setRollCallDatePickerVisible(true)}
+              onToggleAttendance={handleToggleAttendanceStatus}
+              onMarkAllPresent={() => {
+                if (selectedRollCallSessionIndex >= 0 && selectedRollCallSessionIndex < attendanceSessions.length) {
+                  const session = attendanceSessions[selectedRollCallSessionIndex];
+                  if (session) {
+                    updateAttendanceRecords(session.id, [], 'mark_all_present');
+                  }
+                } else {
+                  const allPresent: Record<string, AttendanceStatus> = {};
+                  attendanceStudents.forEach((stu) => {
+                    allPresent[stu.student_id] = 'Present';
+                  });
+                  setPendingAttendanceStatus(allPresent);
+                }
+              }}
+              onUnmarkAll={() => {
+                if (selectedRollCallSessionIndex >= 0 && selectedRollCallSessionIndex < attendanceSessions.length) {
+                  const session = attendanceSessions[selectedRollCallSessionIndex];
+                  if (session) {
+                    updateAttendanceRecords(session.id, [], 'clear_all');
+                  }
+                } else {
+                  setPendingAttendanceStatus({});
+                }
+              }}
+              onSaveAttendance={async () => {
+                const existingSessionIndex = attendanceSessions.findIndex(
+                  (s) => new Date(s.date).toDateString() === rollCallDate.toDateString()
+                );
+                if (existingSessionIndex >= 0) {
+                  const session = attendanceSessions[existingSessionIndex];
+                  if (Object.keys(pendingAttendanceStatus).length > 0) {
+                    const records = Object.entries(pendingAttendanceStatus).map(([studentId, status]) => ({
+                      student_id: studentId,
+                      status: status,
+                    }));
+                    await updateAttendanceRecords(session.id, records);
+                    clearPendingAttendance();
+                  }
+                  setSelectedRollCallSessionIndex(existingSessionIndex);
+                  Alert.alert('Success', 'Attendance saved successfully.');
+                } else {
+                  const newSession = await createQuickAttendanceSession(rollCallDate);
+                  if (newSession && newSession.id && Object.keys(pendingAttendanceStatus).length > 0) {
+                    const records = Object.entries(pendingAttendanceStatus).map(([studentId, status]) => ({
+                      student_id: studentId,
+                      status: status,
+                    }));
+                    await updateAttendanceRecords(newSession.id, records);
+                    clearPendingAttendance();
+                  }
+                }
+              }}
+              onMoreSheetClose={() => setMoreSheetVisible(false)}
+              onStudentMorePress={(student) => {
+                setSelectedStudentForMore(student);
+                setMoreSheetVisible(true);
+              }}
+              onAttendanceHistoryPress={() => setAttendanceHistoryModalVisible(true)}
+              onAttendanceHistoryClose={() => setAttendanceHistoryModalVisible(false)}
+              onDeleteSession={deleteAttendanceSession}
+              onSelectSession={(sessionId, sessionIndex) => {
+                setSelectedAttendanceSessionId(sessionId);
+                setRollCallDate(new Date(attendanceSessions[sessionIndex].date));
+                setSelectedRollCallSessionIndex(sessionIndex);
+              }}
+            />
           )}
 
           {activeTab === 'files' && (
-            files.length === 0 ? <EmptyState icon="📁" title="No files uploaded yet" /> :
-            files.map((file) => {
-              const ext = file.file_type || file.file_name.split('.').pop() || 'file';
-              const iconName = FILE_ICONS[ext] || 'document-outline';
-              return (
-                <View key={file.id} style={[styles.fileRow, { backgroundColor: colors.surface }, Shadows.sm]}>
-                  <TouchableOpacity style={styles.fileMainRow} onPress={() => file.file_url && openDocumentInApp(file.file_url, file.file_name, file.preview_file_url)} activeOpacity={0.85}>
-                    <View style={[styles.fileIcon, { backgroundColor: Colors.primary + '15' }]}><Ionicons name={iconName as any} size={22} color={Colors.primary} /></View>
-                    <View style={styles.fileInfo}>
-                      <Text style={[styles.fileName, { color: colors.textPrimary }]} numberOfLines={1}>{file.file_name}</Text>
-                      <Text style={[styles.fileMeta, { color: colors.textSecondary }]}>
-                        {weekLabel(file.weekly_module_id)} · {file.folder_path !== '/' ? file.folder_path : 'General'} · {formatDate(file.created_at)}
-                      </Text>
-                    </View>
-                    <Ionicons name="download-outline" size={18} color={colors.textSecondary} />
-                  </TouchableOpacity>
-                  {canManage && <ItemActions onEdit={() => openEdit(file)} onDelete={() => deleteItem(file.id)} />}
-                </View>
-              );
-            })
+            <FilesTab
+              files={files}
+              modules={modules}
+              canManage={canManage}
+              onOpenFile={(file) => file.file_url && openDocumentInApp(file.file_url, file.file_name, file.preview_file_url)}
+              onEdit={openEdit}
+              onDelete={deleteItem}
+            />
           )}
 
           {activeTab === 'announcements' && (
-            announcements.length === 0 ? <EmptyState icon="📢" title="No announcements yet" /> :
-            announcements.map((ann) => (
-              <View key={ann.id} style={[styles.annCard, { backgroundColor: colors.surface }, Shadows.sm]}>
-                <View style={styles.annHeader}>
-                  <Ionicons name="megaphone-outline" size={18} color={Colors.primary} />
-                  <Text style={[styles.annTitle, { color: colors.textPrimary }]}>{ann.title}</Text>
-                  {canManage && <ItemActions onEdit={() => openEdit(ann)} onDelete={() => deleteItem(ann.id)} />}
-                </View>
-                <Text style={[styles.annBody, { color: colors.textSecondary }]}>{ann.body}</Text>
-                <Text style={[styles.annDate, { color: colors.mutedForeground }]}>{formatDate(ann.created_at)}</Text>
-              </View>
-            ))
+            <AnnouncementsTab
+              announcements={announcements}
+              canManage={canManage}
+              onEdit={openEdit}
+              onDelete={deleteItem}
+            />
           )}
 
           {activeTab === 'quizzes' && (
-            <>
-              {quizzes.length === 0 ? <EmptyState icon="❓" title="No quizzes yet" /> : (
-                (() => {
-                  const now = new Date();
-                  // Upcoming: quizzes scheduled to open in the future (not yet available)
-                  const upcoming = quizzes.filter(q => {
-                    const isOpenAtSet = !!q.open_at && new Date(q.open_at) > now;
-                    return isOpenAtSet;
-                  });
-                  const missing = quizzes.filter(q => !canManage && !!q.close_at && new Date(q.close_at) < now && ((q.my_attempt?.attempts_used || 0) <= 0));
-                  const open = quizzes.filter(q => {
-                    // Exclude quizzes that are upcoming (open_at in the future)
-                    if (!!q.open_at && new Date(q.open_at) > now) return false;
-                    const isOpen = (!q.open_at || new Date(q.open_at) <= now) && (!q.close_at || new Date(q.close_at) >= now);
-                    return isOpen;
-                  });
-                  const closed = quizzes.filter(q => {
-                    const isClosed = q.close_at && new Date(q.close_at) < now;
-                    if (canManage) {
-                      // Teachers see all closed quizzes regardless of attempts
-                      return isClosed;
-                    }
-                    // Students see closed quizzes where they have attempts
-                    const hasAttempt = (q.my_attempt?.attempts_used || 0) > 0;
-                    return isClosed && hasAttempt;
-                  });
-
-                  const renderQuizCard = (quiz: Quiz) => {
-                    const isOpen = (!quiz.open_at || new Date(quiz.open_at) <= now) && (!quiz.close_at || new Date(quiz.close_at) >= now);
-                    const isUpcoming = !!quiz.open_at && new Date(quiz.open_at) > now;
-                    const isMissing = !canManage && !!quiz.close_at && new Date(quiz.close_at) < now && ((quiz.my_attempt?.attempts_used || 0) <= 0);
-                    const statusDotColor = isUpcoming ? '#7C3AED' : (isOpen ? '#2E7D32' : '#9E9E9E');
-                    return (
-                      <TouchableOpacity
-                        key={quiz.id}
-                        style={[styles.quizCard, { backgroundColor: colors.surface }, isMissing && styles.missingCard, Shadows.sm]}
-                        activeOpacity={0.9}
-                        onPress={() => {
-                          if (canManage) return;
-                          openQuizInfo(quiz);
-                        }}
-                      >
-                        <View style={styles.quizHeader}>
-                          <View style={[styles.quizStatusDot, { backgroundColor: statusDotColor }]} />
-                          <Text style={[styles.quizTitle, { color: colors.textPrimary }, isMissing && styles.missingTitle]}>{quiz.title}</Text>
-                        </View>
-                        {isMissing && (
-                          <View style={styles.missingBadge}><Text style={styles.missingBadgeText}>Missing</Text></View>
-                        )}
-                        <View style={styles.quizMeta}>
-                          {!!quiz.time_limit_minutes && <View style={styles.quizMetaItem}><Ionicons name="timer-outline" size={13} color={colors.textSecondary} /><Text style={[styles.quizMetaText, { color: colors.textSecondary }]}>{quiz.time_limit_minutes} min</Text></View>}
-                          <View style={styles.quizMetaItem}><Ionicons name="refresh-outline" size={13} color={colors.textSecondary} /><Text style={[styles.quizMetaText, { color: colors.textSecondary }]}>{quiz.attempt_limit} attempt{quiz.attempt_limit !== 1 ? 's' : ''}</Text></View>
-                          {!!quiz.close_at && <View style={styles.quizMetaItem}><Ionicons name="calendar-outline" size={13} color={colors.textSecondary} /><Text style={[styles.quizMetaText, { color: colors.textSecondary }]}>Closes {formatDate(quiz.close_at)}</Text></View>}
-                        </View>
-                        <Text style={[styles.topicBadge, { color: colors.textSecondary }]}>{weekLabel(quiz.weekly_module_id)}</Text>
-                        {!canManage && (
-                          <View style={styles.studentActionRow}>
-                            {(() => {
-                              const action = getQuizAction(quiz);
-                              const actionStyle = QUIZ_ACTION_STYLES[action.variant];
-                              return (
-                                <TouchableOpacity
-                                  style={[
-                                    styles.startQuizBtn,
-                                    {
-                                      backgroundColor: actionStyle.backgroundColor,
-                                      borderColor: actionStyle.borderColor,
-                                    },
-                                    action.disabled && { opacity: 0.55 },
-                                  ]}
-                                  disabled={action.disabled}
-                                  onPress={action.onPress}
-                                >
-                                  <Text style={[styles.startQuizText, { color: actionStyle.textColor }]}>{action.label}</Text>
-                                </TouchableOpacity>
-                              );
-                            })()}
-                            <Text style={styles.pendingPill}>
-                              Attempts: {quiz.my_attempt?.attempts_used ?? 0}/{quiz.my_attempt?.attempt_limit ?? quiz.attempt_limit}
-                            </Text>
-                          </View>
-                        )}
-                        {canManage && (
-                          <TouchableOpacity style={styles.inlineBtn} onPress={() => openQuizGrading(quiz)}>
-                            <Text style={styles.inlineBtnText}>Review & Grade</Text>
-                          </TouchableOpacity>
-                        )}
-                        {canManage && <ItemActions onEdit={() => openEdit(quiz)} onDelete={() => deleteItem(quiz.id)} />}
-                      </TouchableOpacity>
-                    );
-                  };
-
-                  const renderAccordionSection = (title: string, items: Quiz[], accentColor: string) => {
-                    if (items.length === 0) return null;
-                    return (
-                      <View key={title} style={styles.accordionSection}>
-                        <View style={[styles.accordionHeader, { borderBottomColor: colors.border }]}>
-                          <View style={[styles.accordionAccent, { backgroundColor: accentColor }]} />
-                          <Text style={[styles.accordionTitle, { color: colors.textSecondary }]}>{title}</Text>
-                          <Text style={[styles.accordionCount, { color: colors.mutedForeground }]}>{items.length}</Text>
-                        </View>
-                        <View style={styles.accordionContent}>
-                          {items.map(renderQuizCard)}
-                        </View>
-                      </View>
-                    );
-                  };
-
-                  return (
-                    <>
-                      {renderAccordionSection('Upcoming', upcoming, '#7C3AED')}
-                      {renderAccordionSection('Open', open, '#2E7D32')}
-                      {renderAccordionSection('Missing', missing, Colors.accentRed)}
-                      {renderAccordionSection('Closed', closed, colors.mutedForeground)}
-                    </>
-                  );
-                })()
-              )}
-            </>
+            <QuizzesTab
+              quizzes={quizzes}
+              modules={modules}
+              canManage={canManage}
+              getQuizAction={getQuizAction}
+              onOpenQuiz={openQuizInfo}
+              onGradeQuiz={openQuizGrading}
+              onEdit={openEdit}
+              onDelete={deleteItem}
+            />
           )}
 
           {activeTab === 'grades' && canManage && (
-            <View style={{ flex: 1 }}>
-              {/* Tab Toggle */}
-              <View style={styles.gradesTabContainer}>
-                <TouchableOpacity
-                  style={[styles.gradesTabBtn, gradebookView === 'table' && styles.gradesTabBtnActive]}
-                  onPress={() => setGradebookView('table')}
-                >
-                  <Ionicons name="grid-outline" size={16} color={gradebookView === 'table' ? '#FFFFFF' : colors.textSecondary} />
-                  <Text style={[styles.gradesTabText, { color: gradebookView === 'table' ? '#FFFFFF' : colors.textSecondary }]}>
-                    Gradebook
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.gradesTabBtn, gradebookView === 'export' && styles.gradesTabBtnActive]}
-                  onPress={() => setGradebookView('export')}
-                >
-                  <Ionicons name="download-outline" size={16} color={gradebookView === 'export' ? '#FFFFFF' : colors.textSecondary} />
-                  <Text style={[styles.gradesTabText, { color: gradebookView === 'export' ? '#FFFFFF' : colors.textSecondary }]}>
-                    Export
-                  </Text>
-                </TouchableOpacity>
-              </View>
+            <GradesTab
+              loading={gradebookLoading}
+              gradebookData={gradebookData}
+              gradebookView={gradebookView}
+              exportFormat={exportFormat}
+              exportScope={exportScope}
+              exportOptions={exportOptions}
+              exportingGrades={exportingGrades}
+              gradeExportStatus={gradeExportStatus}
+              sectionId={id || ''}
+              onViewChange={setGradebookView}
+              onExportFormatChange={setExportFormat}
+              onExportScopeChange={setExportScope}
+              onExportOptionsChange={setExportOptions}
+              onRefresh={fetchGradebookData}
+              onExport={() => {
+                if (!id || !gradebookData) {
+                  Alert.alert('Error', 'No grade data available to export.');
+                  return;
+                }
+                Alert.alert(
+                  `Export ${exportFormat.toUpperCase()}`,
+                  `Download grades as ${exportFormat.toUpperCase()}?`,
+                  [
+                    { text: 'Cancel', style: 'cancel' },
+                    {
+                      text: 'Download',
+                      onPress: async () => {
+                        setExportingGrades(true);
+                        setGradeExportStatus('exporting');
+                        try {
+                          const csvContent = generateGradesCsv(gradebookData, exportScope, exportOptions.includeInactive);
+                          const ext = exportFormat === 'xlsx' ? 'xlsx' : 'csv';
+                          const filename = `course_section_${id}_grades.${ext}`;
+                          const mimeType = exportFormat === 'xlsx'
+                            ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                            : 'text/csv;charset=utf-8;';
 
-              {gradebookView === 'table' ? (
-                <>
-                  {gradebookLoading ? (
-                    <View style={styles.gradebookLoadingContainer}>
-                      <ActivityIndicator size="large" color={Colors.primary} />
-                      <Text style={[styles.gradebookLoadingText, { color: colors.textSecondary }]}>
-                        Loading gradebook...
-                      </Text>
-                    </View>
-                  ) : gradebookData ? (
-                    <GradebookTable
-                      students={gradebookData.students}
-                      inactiveStudents={gradebookData.inactive_students}
-                      items={gradebookData.items}
-                      summary={gradebookData.summary}
-                      loading={gradebookLoading}
-                      onRefresh={fetchGradebookData}
-                      sectionId={id || ''}
-                    />
-                  ) : (
-                    <View style={styles.gradebookEmptyContainer}>
-                      <Ionicons name="document-text-outline" size={48} color={colors.textSecondary} />
-                      <Text style={[styles.gradebookEmptyText, { color: colors.textSecondary }]}>
-                        No grade data available
-                      </Text>
-                    </View>
-                  )}
-                </>
-              ) : (
-                <View style={styles.gradesExportCard}>
-                  <View style={styles.gradesExportHeader}>
-                    <Ionicons name="download-outline" size={20} color={Colors.primary} />
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.gradesExportTitle}>Export Section Grades</Text>
-                      <Text style={styles.gradesExportMeta}>Download grades in CSV or Excel format.</Text>
-                    </View>
-                  </View>
+                          if (Platform.OS === 'web') {
+                            const doc = (globalThis as any).document as Document;
+                            const blob = new Blob([csvContent], { type: mimeType });
+                            const url = URL.createObjectURL(blob);
+                            const anchor = doc.createElement('a');
+                            anchor.href = url;
+                            anchor.setAttribute('download', filename);
+                            doc.body.appendChild(anchor);
+                            anchor.click();
+                            doc.body.removeChild(anchor);
+                            URL.revokeObjectURL(url);
+                            setGradeExportStatus('success');
+                            setGradeExportAt(new Date().toISOString());
+                            return;
+                          }
 
-                  {/* Export Format */}
-                  <View style={styles.exportOptionRow}>
-                    <Text style={[styles.exportOptionLabel, { color: colors.textPrimary }]}>Format:</Text>
-                    <View style={styles.exportOptionButtons}>
-                      <TouchableOpacity
-                        style={[styles.exportOptionBtn, exportFormat === 'csv' && styles.exportOptionBtnActive]}
-                        onPress={() => setExportFormat('csv')}
-                      >
-                        <Text style={[styles.exportOptionText, { color: exportFormat === 'csv' ? '#FFFFFF' : colors.textSecondary }]}>
-                          CSV
-                        </Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={[styles.exportOptionBtn, exportFormat === 'xlsx' && styles.exportOptionBtnActive]}
-                        onPress={() => setExportFormat('xlsx')}
-                      >
-                        <Text style={[styles.exportOptionText, { color: exportFormat === 'xlsx' ? '#FFFFFF' : colors.textSecondary }]}>
-                          Excel
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-
-                  {/* Export Scope */}
-                  <View style={styles.exportOptionRow}>
-                    <Text style={[styles.exportOptionLabel, { color: colors.textPrimary }]}>Scope:</Text>
-                    <View style={styles.exportOptionButtons}>
-                      {(['all', 'activities', 'quizzes', 'final_only'] as const).map((scope) => (
-                        <TouchableOpacity
-                          key={scope}
-                          style={[styles.exportOptionBtn, exportScope === scope && styles.exportOptionBtnActive]}
-                          onPress={() => setExportScope(scope)}
-                        >
-                          <Text style={[styles.exportOptionText, { color: exportScope === scope ? '#FFFFFF' : colors.textSecondary }]}>
-                            {scope === 'all' ? 'All' : scope === 'activities' ? 'Activities' : scope === 'quizzes' ? 'Quizzes' : 'Final Only'}
-                          </Text>
-                        </TouchableOpacity>
-                      ))}
-                    </View>
-                  </View>
-
-                  {/* Include Inactive Toggle */}
-                  <TouchableOpacity
-                    style={styles.exportCheckboxRow}
-                    onPress={() => setExportOptions((prev) => ({ ...prev, includeInactive: !prev.includeInactive }))}
-                  >
-                    <View style={[styles.checkbox, exportOptions.includeInactive && styles.checkboxChecked]}>
-                      {exportOptions.includeInactive && <Ionicons name="checkmark" size={14} color="#FFFFFF" />}
-                    </View>
-                    <Text style={[styles.checkboxLabel, { color: colors.textPrimary }]}>
-                      Include inactive/dropped students
-                    </Text>
-                  </TouchableOpacity>
-
-                  <View style={[styles.gradesExportStatusBadge, { backgroundColor: gradeExportStatusUi.bg }]}>
-                    <Text style={[styles.gradesExportStatusText, { color: gradeExportStatusUi.fg }]}>{gradeExportStatusUi.text}</Text>
-                  </View>
-
-                  <TouchableOpacity
-                    style={[styles.gradesExportBtn, exportingGrades && { opacity: 0.7 }]}
-                    onPress={() => {
-                      if (!id || !gradebookData) {
-                        Alert.alert('Error', 'No grade data available to export.');
-                        return;
-                      }
-                      Alert.alert(
-                        `Export ${exportFormat.toUpperCase()}`,
-                        `Download grades as ${exportFormat.toUpperCase()}?`,
-                        [
-                          { text: 'Cancel', style: 'cancel' },
-                          {
-                            text: 'Download',
-                            onPress: async () => {
-                              setExportingGrades(true);
-                              setGradeExportStatus('exporting');
-                              try {
-                                // Note: xlsx export falls back to CSV (same data, just renamed)
-                                // For proper xlsx, would need a library like xlsx.js
-                                const csvContent = generateGradesCsv(gradebookData, exportScope, exportOptions.includeInactive);
-                                const ext = exportFormat === 'xlsx' ? 'xlsx' : 'csv';
-                                const filename = `course_section_${id}_grades.${ext}`;
-                                const mimeType = exportFormat === 'xlsx'
-                                  ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-                                  : 'text/csv;charset=utf-8;';
-
-                                if (Platform.OS === 'web') {
-                                  const doc = (globalThis as any).document as Document;
-                                  const blob = new Blob([csvContent], { type: mimeType });
-                                  const url = URL.createObjectURL(blob);
-                                  const anchor = doc.createElement('a');
-                                  anchor.href = url;
-                                  anchor.setAttribute('download', filename);
-                                  doc.body.appendChild(anchor);
-                                  anchor.click();
-                                  doc.body.removeChild(anchor);
-                                  URL.revokeObjectURL(url);
-                                  setGradeExportStatus('success');
-                                  setGradeExportAt(new Date().toISOString());
-                                  return;
-                                }
-
-                                const directory = FileSystem.documentDirectory || FileSystem.cacheDirectory;
-                                if (!directory) throw new Error('No writable directory available.');
-                                const target = `${directory}${filename}`;
-                                await FileSystem.writeAsStringAsync(target, csvContent, { encoding: FileSystem.EncodingType.UTF8 });
-                                try {
-                                  if (Platform.OS === 'android') {
-                                    const contentUri = await FileSystem.getContentUriAsync(target);
-                                    await Linking.openURL(contentUri);
-                                  } else {
-                                    await Linking.openURL(target);
-                                  }
-                                } catch {
-                                  Alert.alert('Exported', `File saved to:\n${target}`);
-                                }
-                                setGradeExportStatus('success');
-                                setGradeExportAt(new Date().toISOString());
-                              } catch (e: any) {
-                                setGradeExportStatus('error');
-                                Alert.alert('Error', e.message || 'Could not export grades.');
-                              } finally {
-                                setExportingGrades(false);
-                              }
-                            },
-                          },
-                        ]
-                      );
-                    }}
-                    disabled={exportingGrades}
-                  >
-                    {exportingGrades ? (
-                      <ActivityIndicator size="small" color="#FFFFFF" />
-                    ) : (
-                      <>
-                        <Ionicons name="cloud-download-outline" size={16} color="#FFFFFF" />
-                        <Text style={styles.gradesExportBtnText}>Export {exportFormat.toUpperCase()}</Text>
-                      </>
-                    )}
-                  </TouchableOpacity>
-                </View>
-              )}
-            </View>
+                          const directory = FileSystem.documentDirectory || FileSystem.cacheDirectory;
+                          if (!directory) throw new Error('No writable directory available.');
+                          const target = `${directory}${filename}`;
+                          await FileSystem.writeAsStringAsync(target, csvContent, { encoding: FileSystem.EncodingType.UTF8 });
+                          try {
+                            if (Platform.OS === 'android') {
+                              const contentUri = await FileSystem.getContentUriAsync(target);
+                              await Linking.openURL(contentUri);
+                            } else {
+                              await Linking.openURL(target);
+                            }
+                          } catch {
+                            Alert.alert('Exported', `File saved to:\n${target}`);
+                          }
+                          setGradeExportStatus('success');
+                          setGradeExportAt(new Date().toISOString());
+                        } catch (e: any) {
+                          setGradeExportStatus('error');
+                          Alert.alert('Error', e.message || 'Could not export grades.');
+                        } finally {
+                          setExportingGrades(false);
+                        }
+                      },
+                    },
+                  ]
+                );
+              }}
+            />
           )}
 
           <View style={{ height: 80 }} />
