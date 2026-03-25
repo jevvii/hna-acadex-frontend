@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import * as DocumentPicker from 'expo-document-picker';
+import { DocumentPickerAsset } from 'expo-document-picker';
 import { useAuth } from '@/contexts/AuthContext';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
@@ -35,7 +36,7 @@ export default function SubmissionScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { user } = useAuth();
   const queryClient = useQueryClient();
-  const [files, setFiles] = useState<any[]>([]);
+  const [files, setFiles] = useState<DocumentPickerAsset[]>([]);
 
   // Fetch activity details
   const { data: activity, isLoading } = useQuery<Activity>({
@@ -44,6 +45,7 @@ export default function SubmissionScreen() {
       const response = await api.get(`/activities/${id}/`);
       return response.data;
     },
+    enabled: !!id,
   });
 
   // Submit mutation
@@ -86,6 +88,17 @@ export default function SubmissionScreen() {
             Alert.alert('Error', `${asset.name} exceeds 10MB limit`);
             continue;
           }
+
+          // Validate file type if allowed_file_types is defined
+          if (activity?.allowed_file_types) {
+            const allowedTypes = activity.allowed_file_types.split(',').map(t => t.trim().toLowerCase());
+            const fileExt = asset.name.split('.').pop()?.toLowerCase() || '';
+            if (allowedTypes.length > 0 && !allowedTypes.some(t => t === fileExt || t === `.${fileExt}`)) {
+              Alert.alert('Error', `${asset.name} is not an allowed file type. Allowed: ${activity.allowed_file_types}`);
+              continue;
+            }
+          }
+
           setFiles(prev => [...prev, asset]);
         }
       }
@@ -175,7 +188,11 @@ export default function SubmissionScreen() {
         {files.map((file, index) => (
           <View key={index} className="flex-row items-center bg-gray-100 rounded-lg p-3 mb-2">
             <Text className="flex-1 text-gray-700" numberOfLines={1}>{file.name}</Text>
-            <TouchableOpacity onPress={() => removeFile(index)}>
+            <TouchableOpacity
+              onPress={() => removeFile(index)}
+              accessibilityLabel={`Remove ${file.name}`}
+              accessibilityRole="button"
+            >
               <Text className="text-red-500 ml-2">✕</Text>
             </TouchableOpacity>
           </View>
@@ -183,6 +200,8 @@ export default function SubmissionScreen() {
 
         <TouchableOpacity
           onPress={pickDocument}
+          accessibilityLabel="Add file to upload"
+          accessibilityRole="button"
           className="bg-blue-50 border-2 border-dashed border-blue-300 rounded-xl p-4 items-center mt-2"
         >
           <Text className="text-blue-600">+ Add File</Text>
@@ -193,6 +212,8 @@ export default function SubmissionScreen() {
       <TouchableOpacity
         onPress={handleSubmit}
         disabled={files.length === 0 || submitMutation.isPending}
+        accessibilityLabel="Submit assignment"
+        accessibilityRole="button"
         className={`mt-4 py-4 rounded-xl items-center ${
           files.length === 0 ? 'bg-gray-300' : 'bg-blue-600'
         }`}
